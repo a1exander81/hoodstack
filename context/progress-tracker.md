@@ -64,10 +64,34 @@
 - Chose x402's `exact` scheme for fixed-amount deposits and `upto`
   for withdrawal requests where the final amount may be adjusted by
   network or facilitator fees.
-- Chose Privy over Dynamic for the embedded wallet provider —
-  `@privy-io/wagmi` is a maintained drop-in for wagmi's `createConfig`,
-  and `embeddedWallets.createOnLogin: "users-without-wallets"` covers
-  the no-seed-phrase requirement directly with no custom glue code.
+- Chose Privy for the embedded wallet provider. Confirmed free: Privy's
+  Developer plan includes all core features and only begins billing above
+  10K MAU / 50K monthly signatures / $1M monthly transaction volume. The
+  dashboard's "this app is in development mode — upgrade to production"
+  banner is a mode switch, not a paywall.
+  - Web3Auth (`@web3auth/modal`) was evaluated and rejected. Its free tier
+    is 1,000 monthly active wallets (10x smaller), its repo has ~489 stars
+    for key-management infrastructure, it is mid-rebrand under Consensys
+    ownership, and its React hooks have documented reliability problems.
+    Decisively, its `WagmiProvider` replaces the wagmi config rather than
+    plugging into it and does not support external wagmi connectors —
+    which would break the MetaMask "bring your own wallet" path in
+    `project-overview.md` and make the provider expensive to swap later.
+  - Building key management in-house was rejected outright: a homegrown
+    signer would risk violating the "backend never has access to private
+    keys" invariant in `architecture.md` and would turn the operator into
+    a custodian of player funds, adding a custody/money-transmitter
+    problem on top of gambling licensing.
+
+## Standing Constraint: Wallet Provider Must Be a wagmi Connector
+
+wagmi + viem (both MIT, no vendor account) are the foundation and stay the
+abstraction layer. Any embedded-wallet provider must integrate *as a wagmi
+connector*, never as a replacement for the wagmi config. This keeps
+embedded-wallet users and MetaMask users flowing through the same hooks,
+the same `services/ledger` address-ownership checks, and the same x402
+endpoints — and makes the provider swappable if pricing or reliability
+degrades. Reject any provider that cannot satisfy this.
 
 ## Session Notes
 
@@ -88,10 +112,15 @@
   `src/lib/chains.ts`. Native gas currency on Robinhood Chain is ETH,
   not USDG; irrelevant to players since x402 keeps them off gas
   entirely, but relevant when testing manually.
-- `@privy-io/wagmi` has a known Turbopack build failure as of
-  mid-2025 (`TypeError: s is not iterable`) — use the default webpack
-  dev/build until it's confirmed fixed upstream, don't pass
-  `--turbopack`.
+- `next@15.4.0`–`15.4.7` carry CVE-2025-66478, a critical (CVSS 10.0)
+  unauthenticated RCE in the App Router's RSC protocol. Patched in
+  `15.4.8`. Pin `^15.4.8` or later. The advisory also recommends rotating
+  all app secrets after patching — relevant once treasury keys exist.
+- Alchemy is Robinhood's recommended infra provider for Robinhood Chain
+  and runs a Bundler, Gas Manager, and Smart Wallets on it. Considered and
+  set aside for now (would mean ERC-4337 smart accounts instead of plain
+  EOAs) — worth revisiting if gas sponsorship needs grow beyond what x402
+  covers.
 - This chat's sandbox can reach npm/GitHub but not arbitrary IPs, so
   it can't SSH into the Hostinger VPS directly — deployment steps are
   written for the person (or Claude Code, which has real shell access
