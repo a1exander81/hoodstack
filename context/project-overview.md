@@ -1,17 +1,22 @@
-# Chipstack
+# Hoodstack
 
 ## Overview
 
-Chipstack is a real-money web3 casino built to feel like an ordinary
-betting app. A new player signs up with email, Google, or phone, gets
-a self-custodial wallet automatically, buys "chips" with a card or
-bank transfer, and plays provably-fair games — Coinflip, Crash, Mines,
-and Roulette — with instant settlement and on-demand cash-out. The
-blockchain (Robinhood Chain by default, BNB Smart Chain as an
-alternate rail) exists only in the machinery. Deposits and
-withdrawals are gasless (x402 + Permit2), so a player never buys gas,
-approves a token, or has to understand what a wallet address is
-unless they go looking for it in Settings.
+Hoodstack is a real-money web3 casino built to feel like an ordinary
+betting app. A player connects a wallet they already hold funds in,
+or signs up with email or Google to get a self-custodial embedded
+wallet automatically, and plays provably-fair games — Coinflip,
+Crash, Mines, and Roulette — with instant settlement and on-demand
+cash-out. Hoodstack does not operate its own fiat on-ramp: a player
+with no crypto yet acquires it through a self-custody wallet's own
+built-in purchase flow (e.g. MetaMask's native Buy, backed by
+MoonPay under MetaMask's own compliance relationship, not
+Hoodstack's) and connects that wallet. The blockchain (Robinhood
+Chain by default, BNB Smart Chain as an alternate rail) exists only
+in the machinery from there — deposits and withdrawals are gasless
+(x402 + Permit2), so a funded player never buys gas, approves a
+token, or has to understand what a wallet address is unless they go
+looking for it in Settings.
 
 This product is a regulated real-money gambling business in
 essentially every jurisdiction. This document defines the product; it
@@ -39,18 +44,34 @@ Questions in `progress-tracker.md`.
 
 ## Core User Flow
 
-1. Player signs up with email, Google, or phone — an embedded,
-   self-custodial wallet is created automatically, no seed phrase shown.
+Funding path depends on what the player already has:
+
+- **A — Already holds funds in a wallet.** Connect an existing EVM
+  wallet (MetaMask, Rabby — confirmed to support adding Robinhood
+  Chain and BSC as custom networks; Phantom does not and is excluded).
+  Skip to step 4.
+- **B — Holds crypto elsewhere (an exchange, another wallet) but no
+  dedicated wallet for Hoodstack.** Sign up (step 1), then send
+  USDG/USDT from wherever it's held to the embedded wallet's receive
+  address, shown up front in the wallet drawer.
+- **C — Has no crypto at all.** Sign up (step 1), then get a
+  self-custody wallet — MetaMask recommended — and buy crypto through
+  that wallet's own native purchase flow. Connect that wallet.
+
+1. Player signs up with email or Google — an embedded, self-custodial
+   wallet is created automatically, no seed phrase shown. (Skipped by
+   path A.)
 2. One-time age and identity verification, required before the first
-   deposit.
-3. Player buys chips with a card, bank transfer, or Apple Pay through
-   a fiat on-ramp; funds land as a stablecoin in their wallet.
-4. Player moves chips into their table balance with a single gasless
+   deposit — via Hoodstack's own KYC vendor, independent of any
+   wallet's or on-ramp's KYC.
+3. Funds arrive at a wallet Hoodstack can read: the connected external
+   wallet (A, C) or the embedded wallet after an external transfer (B).
+4. Player moves funds into their table balance with a single gasless
    signature (x402 + Permit2) — no separate "network fee" step.
 5. Player plays Coinflip, Crash, Mines, or Roulette against their
    table balance, settled in real time over WebSocket.
 6. Player cashes out at any time — table balance converts back to
-   their wallet and, optionally, straight back to a bank account or card.
+   their connected wallet.
 
 ## Features
 
@@ -78,12 +99,15 @@ Questions in `progress-tracker.md`.
 - Leaderboards
 
 ### Payments
-- Fiat on-ramp (MoonPay primary — confirmed live USDG-on-Robinhood-Chain
-  support at mainnet launch; Transak as broad-coverage fallback,
-  including BSC/USDT)
+- No in-app fiat on-ramp and no MoonPay/Transak partner relationship
+  — funding depends on a connected or embedded wallet already
+  holding, or acquiring, USDG/USDT. Players without crypto get it
+  through their own wallet's native purchase flow, under that
+  wallet's own KYB — not Hoodstack's.
 - Gasless deposits and table-balance top-ups via x402 + Permit2
-- Gasless (or facilitator-sponsored) withdrawals back on-chain, with
-  an off-ramp path back to card/bank
+- Gasless (or facilitator-sponsored) withdrawals back to the player's
+  connected wallet on-chain; cashing out to fiat, if desired, happens
+  through that wallet's own sell/off-ramp flow, not Hoodstack's
 - Hybrid balance model: off-chain ledger for gameplay speed, on-chain
   settlement for funding and cash-out
 
@@ -99,7 +123,6 @@ Questions in `progress-tracker.md`.
 ### In Scope (v1)
 - Coinflip, Crash, Mines, Roulette
 - Embedded wallet + social login, with MetaMask-style fallback
-- MoonPay + Transak on-ramp integration
 - x402/Permit2 gasless deposit and withdrawal flow
 - Robinhood Chain (default) and BNB Smart Chain
 
@@ -109,11 +132,17 @@ Questions in `progress-tracker.md`.
 - Chains beyond Robinhood Chain and BSC
 - In-house KYC/age-verification system (v1 relies on
   on-ramp-provided or a single third-party vendor's KYC)
+- Own fiat on-ramp/off-ramp integration (MoonPay, Transak, or
+  otherwise) — funding and cash-out route through the player's own
+  wallet instead
 
 ## Success Criteria
 
-1. A non-crypto test user completes signup → funded → first bet
-   placed without needing any blockchain term explained to them.
+1. A non-crypto test user completes signup and, after getting funded
+   via a self-custody wallet's own purchase flow, places a first bet
+   without any blockchain terminology inside Hoodstack's own UI — the
+   one unavoidable technical step (using an external wallet to buy
+   crypto) happens in that wallet's onboarding, not in Hoodstack's.
 2. A deposit reaches the table balance in a single signature with $0
    gas paid by the user.
 3. Every settled round has a verifiable server-seed reveal in game

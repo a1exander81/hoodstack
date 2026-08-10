@@ -4,24 +4,23 @@
 
 | Layer | Technology | Role |
 | --- | --- | --- |
-| Framework | Next.js 15 (App Router) | Full-stack app; server components for game/lobby pages, route handlers for wallet/on-ramp/x402 endpoints |
+| Framework | Next.js 15 (App Router) | Full-stack app; server components for game/lobby pages, route handlers for wallet/x402/KYC endpoints |
 | UI | HeroUI + Tailwind CSS | Component library and styling — reused from the nkosresearch/web3-casino reference frontend |
-| Wallet / Web3 | Embedded wallet SDK (Privy or Dynamic) + wagmi + viem | Social-login embedded wallets and EVM chain interaction. **Replaces** the reference repo's Solana Wallet Adapter — Robinhood Chain and BSC are both EVM chains, so Solana tooling doesn't apply here |
+| Wallet / Web3 | Embedded wallet SDK (Privy) + wagmi + viem | Social-login embedded wallets and EVM chain interaction. **Replaces** the reference repo's Solana Wallet Adapter — Robinhood Chain and BSC are both EVM chains, so Solana tooling doesn't apply here |
 | Chains | Robinhood Chain (Arbitrum-based L2, mainnet since July 1, 2026) + BNB Smart Chain | Settlement chains. USDG is Robinhood Chain's native dollar asset; USDT is used on BSC |
 | Payments | x402 (HTTP-native payment protocol, now under the x402 Foundation) + Permit2 (Uniswap) | Gasless authorization from user wallet to house treasury — see `x402-payment-architecture.md` |
-| Fiat on-ramp | MoonPay (live USDG-on-Robinhood-Chain support), Transak (fallback, broader BSC/USDT coverage) | Card/bank/Apple Pay to stablecoin — the only non-gasless, KYC'd step in the flow |
 | Real-time | Socket.io (WebSocket) | Live round state, chat, leaderboard updates |
 | Cache | Redis (ioredis), in-memory fallback | Active round state, rate limiting, WebSocket presence |
 | Ledger | PostgreSQL (Prisma) | Off-chain house-balance ledger, KYC/age status, RNG seed records, deposit/withdrawal records |
 | Auth | Embedded wallet SDK's built-in auth (email/Google/phone OTP) | No separate auth system — identity and wallet are provisioned together |
-| Compliance | Third-party KYC/age-verification vendor, or the on-ramp's built-in KYC | Required before first fiat purchase in essentially every jurisdiction |
+| Compliance | Dedicated third-party KYC/age-verification vendor, independent of any connected wallet's own on-ramp KYC | Required before first deposit in essentially every jurisdiction |
 
 ## System Boundaries
 
 - `app/(marketing)` — public landing pages, no wallet or session required
 - `app/(app)/games/*` — game UI (Coinflip, Crash, Mines, Roulette), requires an active session
 - `app/api/wallet/*` — thin proxy to the embedded-wallet SDK; never touches private key material
-- `app/api/onramp/*` — creates signed on-ramp sessions (MoonPay/Transak); verifies on-ramp webhooks
+- `app/api/kyc/*` — creates and verifies sessions with the site-level KYC/age-verification vendor; the source of truth for a user's verified status, independent of any wallet's own on-ramp KYC
 - `app/api/x402/*` — implements the 402-challenge/response cycle for deposit and withdrawal endpoints
 - `services/ledger` — the only code path permitted to mutate a user's table balance
 - `services/rng` — provably-fair seed generation and commit/reveal, isolated from the ledger and from any client-writable path
@@ -30,10 +29,10 @@
 ## Storage Model
 
 - **PostgreSQL**: user profiles, KYC/age-verification status,
-  house-balance ledger (append-only entries — the current balance is
-  a derived sum, never a single mutable column), game round history,
-  RNG server-seed hashes and reveals, deposit/withdrawal records with
-  their on-chain transaction hashes.
+  house-balance ledger (append-only entries, keyed by Privy DID — the
+  current balance is a derived sum, never a single mutable column),
+  game round history, RNG server-seed hashes and reveals,
+  deposit/withdrawal records with their on-chain transaction hashes.
 - **Redis**: active round state (e.g. the live Crash multiplier tick,
   an in-progress Mines board before settlement), WebSocket presence,
   rate-limit counters. Nothing here is the source of truth for money.
@@ -46,17 +45,30 @@
 ## Auth and Access Model
 
 - Every user gets a self-custodial embedded wallet on first login;
-  the wallet provider (Privy/Dynamic) manages key material via
-  MPC/TEE — the application backend never has access to private keys.
-- A user's table balance is owned exclusively by their wallet
-  address; `services/ledger` enforces address-level ownership on
-  every mutation.
+  the wallet provider (Privy) manages key material via MPC/TEE — the
+  application backend never has access to private keys.
+- A user's table balance is owned by their Privy user ID (DID), not a
+  raw wallet address. `services/ledger` resolves the authenticated
+  session to a Privy DID, then verifies that the specific address
+  involved in a mutation (deposit sender, withdrawal recipient) is
+  currently one of that DID's linked accounts before proceeding. A
+  single DID may have multiple valid addresses — its embedded wallet
+  plus any linked external wallets — all sharing one balance.
+- The app does not merge balances across two separately-created Privy
+  DIDs, even when they likely belong to the same human (e.g. one
+  created via Google signup, one via a standalone wallet login).
+  Users are steered toward linking an external wallet to an existing
+  session rather than logging into a fresh one with it; unifying two
+  already-separate accounts is a manual support/compliance action,
+  not an automatic one.
 - Withdrawals require an active session plus a fresh signature before
   funds are released on-chain, to prevent a hijacked session from
   triggering a payout.
-- The optional "bring your own wallet" path (MetaMask etc.) uses the
-  same ledger and x402 endpoints — it differs only in how the wallet
-  is connected, not in how funds move.
+- The "bring your own wallet" path (MetaMask, Rabby — confirmed to
+  support adding Robinhood Chain and BSC as custom networks; Phantom
+  does not and is excluded) uses the same ledger and x402 endpoints —
+  it differs only in how the wallet is connected, not in how funds
+  move.
 
 ## Invariants
 
@@ -72,8 +84,10 @@
    alter either value.
 4. A user cannot wager funds that have not been deposited and
    confirmed on-chain — no negative balances, no credit extended.
-5. Age and KYC verification must complete before a user's first fiat
-   purchase, not after.
+5. Age and KYC verification — performed by a dedicated site-level
+   vendor, independent of any connected wallet's own on-ramp KYC —
+   must complete before a user's first deposit into their table
+   balance.
 6. Every balance-affecting endpoint is idempotent, so a retried or
    duplicated request cannot double-credit a deposit or double-pay a
    round.

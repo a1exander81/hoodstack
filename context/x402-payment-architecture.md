@@ -72,9 +72,11 @@ is confirmed.
 4. Facilitator settles the actual amount (after any fee);
    `services/settlement` reconciles the confirmed on-chain amount
    against the pending record and marks it complete.
-5. If the user wants fiat rather than on-chain tokens, the wallet's
-   on-chain balance feeds into MoonPay's or Transak's sell/off-ramp
-   flow to reach a bank account or card.
+5. If the user wants fiat rather than on-chain tokens, that happens
+   through their own connected wallet's native sell/off-ramp flow
+   (e.g. MetaMask's Sell, under that wallet's own compliance
+   relationship) — Hoodstack has no on-ramp or off-ramp partner
+   relationship of its own.
 
 ## Facilitator
 

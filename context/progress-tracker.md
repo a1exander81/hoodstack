@@ -6,9 +6,9 @@
 
 ## Current Goal
 
-- Stand up the embedded wallet + on-ramp + x402 deposit skeleton
-  against a Robinhood Chain or BSC testnet before writing game logic
-  — this is the highest-uncertainty part of the stack
+- Stand up the embedded wallet + x402 deposit skeleton against a
+  Robinhood Chain or BSC testnet before writing game logic — this is
+  the highest-uncertainty part of the stack
 
 ## Completed
 
@@ -24,10 +24,14 @@
 
 ## Next Up
 
+<<<<<<< Updated upstream
 1. Deploy the wallet skeleton to the VPS (`npm run build` must pass
+=======
+1. Merge `feat/login-background` after CodeRabbit review; check animation
+   cost on mobile (8 chips + 5 meteors under one SVG bloom filter)
+2. Deploy to the VPS (`npm run build` must pass
+>>>>>>> Stashed changes
    there) — see `README.md` for the deploy steps
-2. Sandbox the MoonPay on-ramp integration (confirmed live for USDG
-   on Robinhood Chain at mainnet)
 3. Build the x402 deposit-required endpoint and Permit2 settlement
    worker on testnet
 4. Port the reference repo's Coinflip UI onto the new wallet layer as
@@ -159,3 +163,40 @@ degrades. Reject any provider that cannot satisfy this.
   it can't SSH into the Hostinger VPS directly — deployment steps are
   written for the person (or Claude Code, which has real shell access
   on their Mac) to run themselves.
+<<<<<<< Updated upstream
+=======
+
+## Session Notes (cont.)
+
+- Deployed on Vercel (auto-deploy on push to main): hoodstack-tawny.vercel.app.
+  Vercel Hobby is NON-COMMERCIAL only — Pro ($20/mo) required before launch.
+  Vercel cannot host Socket.io or the settlement worker (serverless timeouts);
+  those stay on the Hostinger VPS.
+- Privy pattern learned the hard way: dashboard = PERMITTED, code
+  `loginMethods` = DISPLAYED. Both required. External wallet login has its
+  own dashboard toggle, separate from socials.
+- Login methods live: Google, Twitter, external wallet (MetaMask/Rabby/
+  Phantom). Email + SMS removed by choice. NO durable backup method — Privy
+  warns lost sole login = permanently lost wallet AND funds. Passkeys are
+  the intended fix before real money.
+- `wallet_connect` omitted from walletList — Privy doesn't bundle
+  WalletConnect; needs a project ID.
+- Privy smart wallets stay OFF (EIP-1271 vs EOA signing would break the
+  x402 deposit rail).
+- VPS prepared but UNUSED: user `hoodstack` created, SSH key generated,
+  deploy key NOT yet added to GitHub. No domain purchased — this blocks
+  TLS and Google OAuth on the VPS.
+- Phantom does not support adding Robinhood Chain or BSC as custom EVM
+  networks (confirmed from the wallet debug panel showing a stale
+  Network: 1 / Ethereum mainnet). Dropped from the BYOW wallet list;
+  MetaMask and Rabby confirmed to support custom EVM chains.
+- Decided this session: no in-app fiat on-ramp. MoonPay/Transak dropped
+  as partner integrations on both deposit and withdrawal — see updated
+  `project-overview.md` and `x402-payment-architecture.md`. Funding
+  routes through a connected wallet's own native buy flow (e.g.
+  MetaMask Buy via MoonPay, under MetaMask's KYB, not Hoodstack's);
+  cash-out routes through that same wallet's sell flow. Reasoning:
+  MoonPay's partner KYB review flags gambling as a regulated industry
+  requiring proof of licensing, which Hoodstack doesn't have yet (see
+  Open Questions).
+>>>>>>> Stashed changes
