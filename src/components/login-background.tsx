@@ -1,18 +1,52 @@
 "use client";
 
 /**
- * Ambient login background.
+ * Ambient login background: neon chips falling through the dark, cut by
+ * meteor streaks.
  *
- * Reads as a casino floor receding into the dark: a perspective grid,
- * distant light columns, and chips drifting up through them. Deliberately
- * NOT the neon-crypto look — per ui-context.md, magenta/cyan glow and
- * DeFi/NFT signalling undercut trust for a first-time, non-crypto player.
- * The only saturated colour is chip green (--accent-primary); everything
- * else is near-black with restrained warm accents on the chips themselves.
+ * Motion is the point here — chips tumble at different speeds and sizes to
+ * fake depth, and the meteors fire on long staggered intervals so the screen
+ * never feels like a repeating loop. A faint horizon and floor grid sit
+ * underneath so the falling reads as happening *in* a space rather than
+ * against a flat panel.
+ *
+ * Colour discipline per ui-context.md: chip green is the lead, with amber and
+ * a single violet as secondary chip tones. No magenta/cyan gradients.
  *
  * Purely decorative: aria-hidden, and all motion stops under
  * prefers-reduced-motion.
  */
+
+type Chip = {
+  x: number;
+  r: number;
+  tone: string;
+  dur: number;
+  delay: number;
+  spin: number;
+};
+
+// Spread across x, varied size and speed. Smaller + slower = further away.
+const CHIPS: Chip[] = [
+  { x: 118, r: 26, tone: "#22C55E", dur: 13, delay: 0, spin: 340 },
+  { x: 268, r: 14, tone: "#8B919A", dur: 19, delay: -7, spin: -260 },
+  { x: 402, r: 34, tone: "#E8B931", dur: 11, delay: -4, spin: 300 },
+  { x: 560, r: 11, tone: "#22C55E", dur: 23, delay: -14, spin: -400 },
+  { x: 688, r: 22, tone: "#7C5CE0", dur: 16, delay: -2, spin: 280 },
+  { x: 842, r: 30, tone: "#22C55E", dur: 12, delay: -9, spin: -320 },
+  { x: 980, r: 16, tone: "#E8B931", dur: 20, delay: -5, spin: 360 },
+  { x: 1108, r: 24, tone: "#22C55E", dur: 15, delay: -11, spin: -300 },
+];
+
+// Meteors travel top-right to bottom-left, against the chips' vertical fall.
+const METEORS = [
+  { x: 1180, y: -120, dur: 3.2, delay: 0, len: 210, w: 2.4 },
+  { x: 880, y: -200, dur: 4.6, delay: -1.8, len: 150, w: 1.8 },
+  { x: 1320, y: -60, dur: 2.7, delay: -3.4, len: 260, w: 3 },
+  { x: 640, y: -160, dur: 5.4, delay: -2.2, len: 130, w: 1.5 },
+  { x: 1040, y: -260, dur: 3.9, delay: -4.8, len: 190, w: 2.1 },
+];
+
 export function LoginBackground() {
   return (
     <div
@@ -26,161 +60,183 @@ export function LoginBackground() {
         xmlns="http://www.w3.org/2000/svg"
       >
         <defs>
-          {/* Floor fades out toward the horizon so the grid never competes
-              with the card sitting on top of it. */}
-          <linearGradient id="floorFade" x1="0" y1="0" x2="0" y2="1">
+          <linearGradient id="hsFloor" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#22C55E" stopOpacity="0" />
-            <stop offset="35%" stopColor="#22C55E" stopOpacity="0.13" />
-            <stop offset="100%" stopColor="#22C55E" stopOpacity="0.30" />
+            <stop offset="100%" stopColor="#22C55E" stopOpacity="0.26" />
           </linearGradient>
 
-          <linearGradient id="columnGlow" x1="0" y1="0" x2="0" y2="1">
+          {/* Meteor trail: bright at the head, gone by the tail. */}
+          <linearGradient id="hsTrail" x1="0" y1="0" x2="1" y2="0">
             <stop offset="0%" stopColor="#22C55E" stopOpacity="0" />
-            <stop offset="60%" stopColor="#22C55E" stopOpacity="0.10" />
-            <stop offset="100%" stopColor="#22C55E" stopOpacity="0" />
+            <stop offset="70%" stopColor="#5BE58A" stopOpacity="0.55" />
+            <stop offset="100%" stopColor="#D6FFE4" stopOpacity="0.95" />
           </linearGradient>
 
-          {/* Vignette keeps the centre dark enough for text contrast. */}
-          <radialGradient id="vignette" cx="50%" cy="46%" r="72%">
-            <stop offset="0%" stopColor="#0B0E11" stopOpacity="0.20" />
-            <stop offset="55%" stopColor="#0B0E11" stopOpacity="0.72" />
-            <stop offset="100%" stopColor="#0B0E11" stopOpacity="0.96" />
+          <radialGradient id="hsVignette" cx="50%" cy="46%" r="74%">
+            <stop offset="0%" stopColor="#0B0E11" stopOpacity="0.28" />
+            <stop offset="55%" stopColor="#0B0E11" stopOpacity="0.74" />
+            <stop offset="100%" stopColor="#0B0E11" stopOpacity="0.97" />
           </radialGradient>
 
-          <filter id="soften" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="6" />
+          {/* Neon bloom. Kept to one shared filter — per-element filters get
+              expensive fast on lower-end mobile. */}
+          <filter id="hsGlow" x="-80%" y="-80%" width="260%" height="260%">
+            <feGaussianBlur stdDeviation="5" result="b" />
+            <feMerge>
+              <feMergeNode in="b" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
           </filter>
 
-          <clipPath id="floorClip">
-            <rect x="0" y="430" width="1200" height="370" />
+          <filter id="hsSoft" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="7" />
+          </filter>
+
+          <clipPath id="hsFloorClip">
+            <rect x="0" y="470" width="1200" height="330" />
           </clipPath>
         </defs>
 
         <rect width="1200" height="800" fill="#0B0E11" />
 
-        {/* Distant light columns — suggestion of a room, not a skyline. */}
-        <g opacity="0.55">
-          <rect x="120" y="180" width="52" height="250" fill="url(#columnGlow)" />
-          <rect x="336" y="230" width="34" height="200" fill="url(#columnGlow)" />
-          <rect x="830" y="205" width="44" height="225" fill="url(#columnGlow)" />
-          <rect x="1024" y="165" width="58" height="265" fill="url(#columnGlow)" />
-        </g>
-
-        {/* Horizon line — the single brightest element, anchoring depth. */}
+        {/* Horizon + floor: depth cue only, deliberately dim. */}
+        <line x1="0" y1="470" x2="1200" y2="470" stroke="#22C55E" strokeOpacity="0.3" strokeWidth="1" />
         <line
           x1="0"
-          y1="430"
+          y1="470"
           x2="1200"
-          y2="430"
+          y2="470"
           stroke="#22C55E"
-          strokeOpacity="0.34"
-          strokeWidth="1"
-        />
-        <line
-          x1="0"
-          y1="430"
-          x2="1200"
-          y2="430"
-          stroke="#22C55E"
-          strokeOpacity="0.5"
+          strokeOpacity="0.42"
           strokeWidth="3"
-          filter="url(#soften)"
+          filter="url(#hsSoft)"
         />
-
-        {/* Perspective floor. Verticals converge on the vanishing point at
-            (600, 430); horizontals are spaced non-linearly to fake depth. */}
-        <g clipPath="url(#floorClip)" stroke="url(#floorFade)" strokeWidth="1">
-          <line x1="600" y1="430" x2="-560" y2="800" />
-          <line x1="600" y1="430" x2="-180" y2="800" />
-          <line x1="600" y1="430" x2="105" y2="800" />
-          <line x1="600" y1="430" x2="310" y2="800" />
-          <line x1="600" y1="430" x2="455" y2="800" />
-          <line x1="600" y1="430" x2="600" y2="800" />
-          <line x1="600" y1="430" x2="745" y2="800" />
-          <line x1="600" y1="430" x2="890" y2="800" />
-          <line x1="600" y1="430" x2="1095" y2="800" />
-          <line x1="600" y1="430" x2="1380" y2="800" />
-          <line x1="600" y1="430" x2="1760" y2="800" />
-
-          <line x1="0" y1="452" x2="1200" y2="452" strokeOpacity="0.5" />
-          <line x1="0" y1="482" x2="1200" y2="482" strokeOpacity="0.6" />
-          <line x1="0" y1="524" x2="1200" y2="524" strokeOpacity="0.7" />
-          <line x1="0" y1="582" x2="1200" y2="582" strokeOpacity="0.8" />
-          <line x1="0" y1="658" x2="1200" y2="658" strokeOpacity="0.9" />
-          <line x1="0" y1="756" x2="1200" y2="756" />
+        <g clipPath="url(#hsFloorClip)" stroke="url(#hsFloor)" strokeWidth="1" strokeOpacity="0.7">
+          <line x1="600" y1="470" x2="-420" y2="800" />
+          <line x1="600" y1="470" x2="-40" y2="800" />
+          <line x1="600" y1="470" x2="248" y2="800" />
+          <line x1="600" y1="470" x2="452" y2="800" />
+          <line x1="600" y1="470" x2="600" y2="800" />
+          <line x1="600" y1="470" x2="748" y2="800" />
+          <line x1="600" y1="470" x2="952" y2="800" />
+          <line x1="600" y1="470" x2="1240" y2="800" />
+          <line x1="600" y1="470" x2="1620" y2="800" />
+          <line x1="0" y1="498" x2="1200" y2="498" strokeOpacity="0.45" />
+          <line x1="0" y1="542" x2="1200" y2="542" strokeOpacity="0.55" />
+          <line x1="0" y1="606" x2="1200" y2="606" strokeOpacity="0.7" />
+          <line x1="0" y1="694" x2="1200" y2="694" strokeOpacity="0.85" />
         </g>
 
-        {/* Chips drifting up through the room. Edge notches are the real
-            detail of a casino chip — the thing that makes it read as a chip
-            rather than a coin. */}
-        <g className="hs-drift hs-drift-a">
-          <Chip x={228} y={560} r={30} tone="#22C55E" />
-        </g>
-        <g className="hs-drift hs-drift-b">
-          <Chip x={962} y={620} r={22} tone="#E8B931" />
-        </g>
-        <g className="hs-drift hs-drift-c">
-          <Chip x={772} y={506} r={15} tone="#8B919A" />
-        </g>
-        <g className="hs-drift hs-drift-d">
-          <Chip x={392} y={478} r={11} tone="#22C55E" />
+        {/* Meteor shower */}
+        <g filter="url(#hsGlow)">
+          {METEORS.map((m, i) => (
+            <g
+              key={i}
+              className="hs-meteor"
+              style={{
+                animationDuration: `${m.dur}s`,
+                animationDelay: `${m.delay}s`,
+                ["--hs-x" as string]: `${m.x}px`,
+                ["--hs-y" as string]: `${m.y}px`,
+              }}
+            >
+              <line
+                x1={0}
+                y1={0}
+                x2={m.len}
+                y2={-m.len * 0.52}
+                stroke="url(#hsTrail)"
+                strokeWidth={m.w}
+                strokeLinecap="round"
+              />
+              <circle r={m.w * 0.9} fill="#EAFFF1" />
+            </g>
+          ))}
         </g>
 
-        <rect width="1200" height="800" fill="url(#vignette)" />
+        {/* Falling chips */}
+        <g filter="url(#hsGlow)">
+          {CHIPS.map((c, i) => (
+            <g
+              key={i}
+              className="hs-fall"
+              style={{
+                animationDuration: `${c.dur}s`,
+                animationDelay: `${c.delay}s`,
+                ["--hs-cx" as string]: `${c.x}px`,
+                ["--hs-spin" as string]: `${c.spin}deg`,
+              }}
+            >
+              <ChipMark r={c.r} tone={c.tone} />
+            </g>
+          ))}
+        </g>
+
+        <rect width="1200" height="800" fill="url(#hsVignette)" />
       </svg>
 
       <style>{`
-        .hs-drift { animation: hs-float 15s ease-in-out infinite; }
-        .hs-drift-b { animation-duration: 19s; animation-delay: -4s; }
-        .hs-drift-c { animation-duration: 23s; animation-delay: -9s; }
-        .hs-drift-d { animation-duration: 27s; animation-delay: -2s; }
+        .hs-fall {
+          animation-name: hs-fall;
+          animation-timing-function: linear;
+          animation-iteration-count: infinite;
+          transform-box: view-box;
+        }
+        @keyframes hs-fall {
+          0%   { transform: translate(var(--hs-cx), -120px) rotate(0deg); opacity: 0; }
+          8%   { opacity: 1; }
+          92%  { opacity: 1; }
+          100% { transform: translate(var(--hs-cx), 900px) rotate(var(--hs-spin)); opacity: 0; }
+        }
 
-        @keyframes hs-float {
-          0%, 100% { transform: translateY(0) rotate(0deg); }
-          50%      { transform: translateY(-26px) rotate(6deg); }
+        .hs-meteor {
+          animation-name: hs-meteor;
+          animation-timing-function: cubic-bezier(.4,0,.85,.4);
+          animation-iteration-count: infinite;
+          transform-box: view-box;
+          opacity: 0;
+        }
+        @keyframes hs-meteor {
+          0%   { transform: translate(var(--hs-x), var(--hs-y)); opacity: 0; }
+          6%   { opacity: 1; }
+          46%  { opacity: 1; }
+          58%  { transform: translate(calc(var(--hs-x) - 900px), calc(var(--hs-y) + 830px)); opacity: 0; }
+          100% { transform: translate(calc(var(--hs-x) - 900px), calc(var(--hs-y) + 830px)); opacity: 0; }
         }
 
         @media (prefers-reduced-motion: reduce) {
-          .hs-drift { animation: none; }
+          .hs-fall, .hs-meteor { animation: none; }
+          .hs-meteor { opacity: 0; }
+          .hs-fall { opacity: 0.5; }
         }
       `}</style>
     </div>
   );
 }
 
-/** A single chip: body, inner ring, and six edge notches. */
-function Chip({
-  x,
-  y,
-  r,
-  tone,
-}: {
-  x: number;
-  y: number;
-  r: number;
-  tone: string;
-}) {
+/** A single chip: body, inner dashed ring, and six edge notches. */
+function ChipMark({ r, tone }: { r: number; tone: string }) {
   const notches = [0, 60, 120, 180, 240, 300];
   return (
-    <g transform={`translate(${x} ${y})`} opacity="0.5">
-      <circle r={r} fill="#161A20" stroke={tone} strokeOpacity="0.85" strokeWidth={r * 0.09} />
+    <g opacity="0.62">
+      <circle r={r} fill="#0F1419" stroke={tone} strokeOpacity="0.9" strokeWidth={r * 0.1} />
       <circle
-        r={r * 0.6}
+        r={r * 0.58}
         fill="none"
         stroke={tone}
-        strokeOpacity="0.4"
-        strokeWidth={r * 0.06}
+        strokeOpacity="0.45"
+        strokeWidth={r * 0.07}
         strokeDasharray={`${r * 0.3} ${r * 0.22}`}
       />
       {notches.map((deg) => (
         <rect
           key={deg}
-          x={-r * 0.1}
+          x={-r * 0.11}
           y={-r}
-          width={r * 0.2}
-          height={r * 0.26}
+          width={r * 0.22}
+          height={r * 0.28}
           fill={tone}
-          fillOpacity="0.75"
+          fillOpacity="0.85"
           transform={`rotate(${deg})`}
         />
       ))}

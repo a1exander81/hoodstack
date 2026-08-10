@@ -33,7 +33,7 @@ export default function Home() {
               Hoodstack
             </h1>
             <p className="text-sm tracking-[0.2em] text-text-muted uppercase">
-              Play · Stake · Cash out
+              Play · Vibe · Cash out
             </p>
           </div>
 
