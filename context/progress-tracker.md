@@ -24,17 +24,11 @@
 
 ## Next Up
 
-<<<<<<< Updated upstream
 1. Deploy the wallet skeleton to the VPS (`npm run build` must pass
-=======
-1. Merge `feat/login-background` after CodeRabbit review; check animation
-   cost on mobile (8 chips + 5 meteors under one SVG bloom filter)
-2. Deploy to the VPS (`npm run build` must pass
->>>>>>> Stashed changes
    there) — see `README.md` for the deploy steps
-3. Build the x402 deposit-required endpoint and Permit2 settlement
+2. Build the x402 deposit-required endpoint and Permit2 settlement
    worker on testnet
-4. Port the reference repo's Coinflip UI onto the new wallet layer as
+3. Port the reference repo's Coinflip UI onto the new wallet layer as
    the first end-to-end playable path
 
 ## Open Questions
@@ -92,6 +86,11 @@
     keys" invariant in `architecture.md` and would turn the operator into
     a custodian of player funds, adding a custody/money-transmitter
     problem on top of gambling licensing.
+- Identity model: a user's table balance is owned by their Privy DID
+  (`user.id`), not a raw wallet address — a DID may have multiple
+  linked addresses (embedded + external) sharing one balance. Two
+  separately-created DIDs are never auto-merged, even for the same
+  human. See `architecture.md` Auth and Access Model.
 
 ## Standing Constraint: Wallet Provider Must Be a wagmi Connector
 
@@ -163,8 +162,6 @@ degrades. Reject any provider that cannot satisfy this.
   it can't SSH into the Hostinger VPS directly — deployment steps are
   written for the person (or Claude Code, which has real shell access
   on their Mac) to run themselves.
-<<<<<<< Updated upstream
-=======
 
 ## Session Notes (cont.)
 
@@ -199,4 +196,3 @@ degrades. Reject any provider that cannot satisfy this.
   MoonPay's partner KYB review flags gambling as a regulated industry
   requiring proof of licensing, which Hoodstack doesn't have yet (see
   Open Questions).
->>>>>>> Stashed changes
