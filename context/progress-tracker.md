@@ -17,6 +17,9 @@
   wallet provisions automatically with no seed phrase shown; balance
   reads and chain switching confirmed on both Robinhood Chain Testnet
   and BSC Testnet. Not yet deployed to the VPS.
+- **Login UI merged** (`feat/login-background`, PR #1) — animated SVG
+  background (falling neon chips, meteor streaks), Hoodstack branding,
+  reduced-motion support. CodeRabbit checks passed, merged to `main`.
 
 ## In Progress
 
