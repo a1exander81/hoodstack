@@ -20,15 +20,21 @@ const wagmiConfig = createConfig({
 
 const privyConfig: PrivyClientConfig = {
   // Two audiences, one modal:
-  //   - normies: email / Google / SMS -> embedded wallet, no seed phrase
-  //   - crypto-native: 'wallet' -> their own MetaMask etc.
+  //   - normies: Google / Twitter -> embedded wallet, no seed phrase
+  //   - crypto-native: 'wallet' -> their own MetaMask, Rabby, Phantom
   // Both land in the same wagmi hooks and the same services/ledger
-  // address-ownership checks. See project-overview.md "bring your own
-  // wallet" path.
+  // address-ownership checks. See project-overview.md.
   //
   // A login method must appear BOTH here and be toggled on in the Privy
-  // dashboard. Dashboard = permitted, this array = displayed.
-  loginMethods: ["email", "google", "sms", "twitter", "wallet"],
+  // dashboard. Dashboard = permitted, this array = displayed. External
+  // wallet login has its own dashboard toggle, separate from socials.
+  //
+  // NOTE: no durable backup login method is enabled (email / SMS / passkey).
+  // Privy warns that a user who loses their only login method loses their
+  // embedded wallet — and its funds — permanently, and social providers can
+  // suspend accounts without notice. Revisit before real money is live.
+  // See progress-tracker.md open questions.
+  loginMethods: ["google", "twitter", "wallet"],
   embeddedWallets: {
     // 'users-without-wallets' means someone logging in with their own
     // MetaMask does NOT get a redundant embedded wallet created.
@@ -39,16 +45,12 @@ const privyConfig: PrivyClientConfig = {
   appearance: {
     theme: "dark",
     accentColor: "#22C55E",
-    // false = web2 methods listed first, wallet below. Matches the
-    // "Prioritize: Web2" choice in the dashboard. Wallet users are not
-    // excluded, just not first.
+    // false = social methods listed first, wallet below.
     showWalletLoginFirst: false,
-    walletList: [
-      "metamask",
-      "coinbase_wallet",
-      "wallet_connect",
-      "detected_ethereum_wallets",
-    ],
+    // wallet_connect deliberately omitted: Privy does not bundle
+    // WalletConnect by default and it requires a WalletConnect project ID.
+    // Add it back alongside that config if mobile wallet support is needed.
+    walletList: ["metamask", "rabby_wallet", "phantom", "detected_ethereum_wallets"],
   },
 };
 
