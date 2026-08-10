@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-- Planning / spec stage — not started
+- Build stage — wallet layer done, moving to payments
 
 ## Current Goal
 
@@ -12,21 +12,20 @@
 
 ## Completed
 
-- None yet
+- **Wallet skeleton — verified end to end locally.** Next.js 15 +
+  Privy + wagmi/viem. Email and Google login both working; embedded
+  wallet provisions automatically with no seed phrase shown; balance
+  reads and chain switching confirmed on both Robinhood Chain Testnet
+  and BSC Testnet. Not yet deployed to the VPS.
 
 ## In Progress
 
-- Wallet skeleton (Next.js 15 + Privy + wagmi/viem, Robinhood Chain
-  Testnet + BSC Testnet configured, sign-in → embedded wallet →
-  balance read on a verification page). Scaffolded locally; not yet
-  run, not yet deployed. See `chipstack-app/README.md` in this
-  session's output for setup and VPS deployment steps.
+- None
 
 ## Next Up
 
-1. Run the wallet skeleton locally, confirm sign-in → wallet →
-   testnet balance read works on both chains, then deploy to the VPS
-   — mark this unit complete once `npm run build` passes there too
+1. Deploy the wallet skeleton to the VPS (`npm run build` must pass
+   there) — see `README.md` for the deploy steps
 2. Sandbox the MoonPay on-ramp integration (confirmed live for USDG
    on Robinhood Chain at mainnet)
 3. Build the x402 deposit-required endpoint and Permit2 settlement
@@ -50,7 +49,14 @@
 - Does the CDP-hosted x402 facilitator cover Robinhood Chain and BSC,
   or does this need a self-hosted facilitator? (see
   `x402-payment-architecture.md`)
-- Does "Chipstack" clear a trademark search in the target markets?
+- Does "Hoodstack" clear a trademark search in the target markets?
+  Elevated risk: the name gestures at Robinhood, an actively defended
+  trademark, while the product is unlicensed real-money gambling built
+  on Robinhood's own chain. Needs a real trademark search before any
+  public launch or marketing spend.
+- When must users be prompted to link a backup login method, and is it
+  a hard gate before first deposit? (see Session Notes — social-only
+  login can permanently orphan a funded wallet)
 
 ## Architecture Decisions
 
@@ -121,6 +127,34 @@ degrades. Reject any provider that cannot satisfy this.
   set aside for now (would mean ERC-4337 smart accounts instead of plain
   EOAs) — worth revisiting if gas sponsorship needs grow beyond what x402
   covers.
+- **Privy account-loss risk:** a user's Privy account and embedded
+  wallet become permanently inaccessible if they lose their only login
+  method, and social OAuth providers can suspend or delete accounts
+  without notice — neither Anthropic-side nor Privy can re-link an
+  account on a user's behalf. Privy's own guidance is that apps holding
+  onchain assets must prompt users to link a durable backup (email,
+  phone, or passkey) alongside social login. For a real-money casino
+  this is a requirement, not a nice-to-have. Raised as an open question
+  above.
+- **`@x402/*` webpack workaround in `next.config.ts`:** wagmi's
+  connectors barrel export pulls in Coinbase's Base Account connector →
+  `@coinbase/cdp-sdk` → dynamic imports of optional `@x402/{core,evm,svm}`
+  peer deps that aren't installed. Webpack resolves dynamic imports at
+  build time and fails. Fixed with an `IgnorePlugin` matching `/^@x402\//`.
+  Unrelated to this project's own x402 work, which runs through a
+  self-hosted facilitator, not Coinbase's SDK. Remove only if the Base
+  Account connector is ever adopted.
+- **Privy smart wallets stay OFF.** Toggling them on switches users from
+  embedded EOAs to ERC-4337 smart accounts, which sign via EIP-1271
+  rather than plain ECDSA. The deposit rail in
+  `x402-payment-architecture.md` assumes EOA signatures (EIP-3009
+  `transferWithAuthorization`, Permit2-witnessed transfers); those paths
+  need re-validation before any move to smart accounts. Decide this
+  deliberately when building the x402 endpoint, not via a dashboard
+  toggle.
+- Robinhood Chain needs no Privy dashboard configuration — chains are
+  supplied in code via `supportedChains` in
+  `src/providers/app-providers.tsx`, reading `src/lib/chains.ts`.
 - This chat's sandbox can reach npm/GitHub but not arbitrary IPs, so
   it can't SSH into the Hostinger VPS directly — deployment steps are
   written for the person (or Claude Code, which has real shell access
