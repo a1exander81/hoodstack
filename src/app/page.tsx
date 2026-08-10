@@ -22,7 +22,7 @@ export default function Home() {
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 px-6">
-      <h1 className="text-2xl font-semibold">Chipstack — wallet check</h1>
+      <h1 className="text-2xl font-semibold">Hoodstack — wallet check</h1>
 
       {!authenticated ? (
         <button
