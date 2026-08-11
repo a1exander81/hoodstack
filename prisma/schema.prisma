@@ -1,0 +1,30 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum LedgerEntryType {
+  DEPOSIT
+}
+
+model LedgerEntry {
+  id             String          @id @default(cuid())
+  userId         String          // Privy DID (user.id) — NOT a wallet address
+  type           LedgerEntryType
+  amountMicroUsd BigInt          // integer minor units; positive = credit
+  asset          String          // "USDG" | "USDT"
+  chainId        Int             // 46630 = Robinhood Chain Testnet, 97 = BSC Testnet
+  txHash         String          @unique // idempotency key
+  createdAt      DateTime        @default(now())
+
+  @@index([userId])
+}
