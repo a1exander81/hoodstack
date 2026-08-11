@@ -2,14 +2,15 @@
 
 ## Current Phase
 
-- Build stage — wallet layer done and verified in production, moving
-  to payments
+- Build stage — wallet layer done and verified in production, x402
+  deposit route built and building clean, moving to the settlement
+  facilitator
 
 ## Current Goal
 
-- Build the x402 deposit-required endpoint and Permit2 settlement
-  worker on testnet — this is now the highest-uncertainty part of the
-  stack
+- Build and run a self-hosted x402 facilitator (`services/settlement`)
+  and point `FACILITATOR_URL` at it — the deposit route itself is
+  complete; this is the only remaining blocker on the current unit
 
 ## Completed
 
@@ -28,6 +29,33 @@
 - **Login UI merged** (`feat/login-background`, PR #1) — animated SVG
   background (falling neon chips, meteor streaks), Hoodstack branding,
   reduced-motion support. CodeRabbit checks passed, merged to `main`.
+- **x402 deposit route built and building clean**
+  (`app/api/x402/deposit/route.ts`, branch `feat/x402-deposit-endpoint`,
+  pushed, PR open for CodeRabbit review). Uses `x402ResourceServer` +
+  `HTTPFacilitatorClient` from `@x402/core/server` and `ExactEvmScheme`
+  from `@x402/evm/exact/server` — not `@x402/next`, which requires
+  Next 16 and conflicts with the `^15.4.8` CVE-2025-66478 pin. Registers
+  both `eip155:46630` and `eip155:97`. Hard runtime guards on every
+  asset/facilitator env var, no silent fallback to a guessed address.
+  `npm run build` currently fails cleanly on `FACILITATOR_URL is not
+  set` — correct, since no facilitator exists yet.
+- **`next.config.ts`'s `@x402/*` `IgnorePlugin` re-scoped with
+  `contextRegExp`** to only fire inside `@coinbase/cdp-sdk`'s own
+  directory — the original name-only match would have silently
+  broken our own new `@x402/core`/`@x402/evm` imports.
+- **USDG on Robinhood Chain Testnet confirmed:**
+  `0x7E955252E15c84f5768B83c41a71F9eba181802F` — verified directly
+  against Paxos's own docs, not Robinhood's (whose testnet contracts
+  table only lists WETH).
+- **USDT on BSC Testnet: no canonical deployment exists.** Deployed
+  our own `MockUSDT` (6 decimals, open `faucet(uint256)` mint) at
+  `0xaA5E574E9cb6F8df5A47f2034d520AA7cee8a193` via Foundry
+  (`contracts/mock-usdt/`). Verified live via `eth_getCode` and a
+  successful mint confirmed through the on-chain `Transfer` event log.
+- **Permit2 (`0x000000000022D473030F116dDEE9F6B43aC78BA3`) confirmed
+  live on both testnets** via `eth_getCode` — deployment chain ID
+  decoded from each bytecode blob (`0xB626`=46630, `0x61`=97) as
+  additional confirmation beyond non-empty bytecode.
 
 ## In Progress
 
@@ -35,23 +63,28 @@
 
 ## Next Up
 
-1. Build the x402 deposit-required endpoint and Permit2 settlement
-   worker on testnet
-2. Port the reference repo's Coinflip UI onto the new wallet layer as
+1. Build a self-hosted x402 facilitator (`services/settlement`) using
+   `@x402/evm`'s facilitator-side APIs. Point `FACILITATOR_URL` at it
+   (localhost for dev, VPS later).
+2. Confirm `HOUSE_TREASURY_ADDRESS` is actually set in `.env.local` —
+   its guard hasn't been reached yet since `FACILITATOR_URL` fails
+   first; unconfirmed either way.
+3. `feat/x402-deposit-endpoint` pushed, PR open for CodeRabbit
+   review — address any findings, then merge to `main`. Do not merge
+   before CodeRabbit runs, same pattern as PR #1.
+4. Port the reference repo's Coinflip UI onto the new wallet layer as
    the first end-to-end playable path
-3. Deploy Socket.io and the settlement worker to the VPS once built
-   (Vercel's serverless functions can't host either — see Session
-   Notes). Needs a domain or `sslip.io` wildcard DNS first, since
-   both TLS and Google OAuth's redirect URI require HTTPS.
+5. Deploy Socket.io and the settlement worker to the VPS once built.
+   Needs a domain or `sslip.io` wildcard DNS first.
 
 ## Open Questions
 
 - Which jurisdictions will Chipstack operate in at launch, and what
   license or registration does that require in each? Blocks go-live,
   not development.
-- Who provides age/KYC verification — the on-ramp's built-in KYC
-  (MoonPay/Transak), or a separate vendor for site-level gating
-  before deposit?
+- Who provides age/KYC verification — since MoonPay/Transak are no
+  longer partner integrations, this needs a standalone site-level KYC
+  vendor decision.
 - What deposit/wager limits and responsible-gambling controls
   (self-exclusion, deposit caps, cool-off periods) are required for
   the target jurisdictions?
@@ -59,7 +92,10 @@
   self-hosted HSM, or a custody provider?
 - Does the CDP-hosted x402 facilitator cover Robinhood Chain and BSC,
   or does this need a self-hosted facilitator? (see
-  `x402-payment-architecture.md`)
+  `x402-payment-architecture.md`) **Partially answered:**
+  `@x402/evm`'s documented default network list doesn't include either
+  chain — self-hosted is confirmed necessary. Still open: where it
+  actually runs.
 - Does "Hoodstack" clear a trademark search in the target markets?
   Elevated risk: the name gestures at Robinhood, an actively defended
   trademark, while the product is unlicensed real-money gambling built
@@ -217,3 +253,14 @@ degrades. Reject any provider that cannot satisfy this.
   Next Up list is retired as written; Vercel already serves the
   wallet skeleton in production. The VPS is now scoped narrowly to
   Socket.io + the settlement worker, deferred until those are built.
+- **`@x402/next` requires Next 16** — do not force-install with
+  `--legacy-peer-deps` on this path. Use `@x402/core/server`'s
+  `x402ResourceServer` + `HTTPFacilitatorClient` directly instead.
+- **Path alias gotcha:** `tsconfig.json`'s `@/*` already maps to
+  `./src/*` — import as `@/lib/...`, not `@/src/lib/...`.
+- **The facilitator's private key is a gas wallet only** — pays gas
+  to broadcast settlements, never custodies user funds. Separate
+  concern from the still-open "who holds the house treasury key"
+  question above.
+- **`contracts/mock-usdt/`** is a Foundry project nested in the main
+  repo, gitignored for `lib/`, `out/`, `cache/`, `broadcast/`.
