@@ -24,9 +24,9 @@
 
 - Default to server components; add `use client` only where browser
   interactivity (game canvas, WebSocket subscriptions) requires it
-- Route handlers under `app/api/wallet`, `app/api/onramp`, and
-  `app/api/x402` run server-only and must never expose treasury key
-  material to the client
+- Route handlers under `src/app/api/wallet`, `src/app/api/onramp`,
+  and `src/app/api/x402` run server-only and must never expose
+  treasury key material to the client
 - Keep each route handler focused on a single responsibility
 
 ## Styling
@@ -67,10 +67,17 @@
 
 ## File Organization
 
-- `app/(marketing)/` — public landing pages
-- `app/(app)/games/` — game UI and per-game client logic
-- `app/api/` — wallet, on-ramp, and x402 route handlers
+- `src/app/(marketing)/` — public landing pages
+- `src/app/(app)/games/` — game UI and per-game client logic
+- `src/app/api/` — wallet, on-ramp, and x402 route handlers
 - `services/ledger/` — the only balance-mutating code path
 - `services/rng/` — provably-fair seed generation and reveal
 - `services/settlement/` — on-chain settlement worker and facilitator
   client
+
+Note: this project scaffolds under `src/`, not a bare `app/` at repo
+root (see `tsconfig.json`'s `@/*` → `./src/*`). A root-level `app/`
+directory silently shadows `src/app/` in Next.js's build — this is
+what caused the production incident logged in
+`progress-tracker.md`'s Session Notes. Never create files under a
+bare `app/`.
