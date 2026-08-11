@@ -2,15 +2,16 @@
 
 ## Current Phase
 
-- Build stage — wallet layer done, x402 deposit route merged, deployed,
-  and verified live in production. Only the self-hosted facilitator
-  stands between here and a real end-to-end deposit.
+- Build stage — wallet layer, x402 deposit route, and the self-hosted
+  facilitator are all built, deployed (locally), and verified reachable.
+  A real signed deposit through the browser UI is the last unverified
+  link before ledger work can start in earnest.
 
 ## Current Goal
 
-- Build and run a self-hosted x402 facilitator (`services/settlement`)
-  and point `FACILITATOR_URL` at it for real — currently an `.invalid`
-  placeholder everywhere (Vercel + `.env.local`)
+- Drive one real deposit through the actual browser UI (funded embedded
+  wallet signing a real `PAYMENT` payload) to prove `/verify` → `/settle`
+  end to end, not just that the facilitator is reachable.
 
 ## Completed
 
@@ -73,6 +74,24 @@
   src/app/api/x402`; confirmed live via `curl` (200) and a visual
   screenshot showing the real login page and working wallet/chain
   switcher post-fix.
+- **Self-hosted x402 facilitator built and verified reachable** (`facilitator/`
+  — a new standalone directory, deliberately NOT `services/settlement`; see
+  Open Questions below). Express server on `@x402/core` 2.21.0 + `@x402/evm`
+  2.21.0, exposing `/verify`, `/settle`, `/supported`, `/health`. Registers
+  `exact` (deposits) + `upto` (withdrawals) on both `eip155:46630` and
+  `eip155:97`, each with its own chain-bound signer sharing one EOA gas
+  wallet. Type-checked clean against the real published package types
+  (not just reasoned about) before being handed off. `FACILITATOR_URL` in
+  `.env.local` now points at `http://localhost:4022` for local dev (Vercel
+  still on the `.invalid` placeholder — VPS deploy pending). Verified via a
+  temporary request logger that `GET /supported` genuinely reaches this
+  facilitator when the deposit route's `x402ResourceServer.initialize()`
+  runs, and that the resulting `402` challenge carries the real verified
+  USDG address. NOT yet verified: an actual signed `/verify` → `/settle`
+  round-trip — needs a funded embedded wallet through the real UI, not curl.
+  Gas wallet (dedicated, never the treasury key): funded with testnet ETH
+  on Robinhood Chain Testnet and testnet BNB on BSC Testnet via each
+  chain's official faucet.
 
 ## In Progress
 
@@ -80,17 +99,23 @@
 
 ## Next Up
 
-1. Build a self-hosted x402 facilitator (`services/settlement`) using
-   `@x402/evm`'s facilitator-side APIs. Point `FACILITATOR_URL` at it
-   for real (localhost for dev, VPS later) — currently an `.invalid`
-   placeholder everywhere.
-2. Decide who holds the house treasury's signing key —
+1. Drive a real signed deposit through the browser UI against the local
+   facilitator — proves `/verify` → `/settle`, not just reachability.
+2. Decide: keep or strip the temporary `[http]` request logger added to
+   `facilitator/index.ts` for diagnosis this session — asked, not yet
+   answered.
+3. Decide who holds the house treasury's signing key —
    `HOUSE_TREASURY_ADDRESS` is currently the zero address as a
    placeholder everywhere, not a real value.
-3. Port the reference repo's Coinflip UI onto the new wallet layer as
-   the first end-to-end playable path
-4. Deploy Socket.io and the settlement worker to the VPS once built.
-   Needs a domain or `sslip.io` wildcard DNS first.
+4. Fix `progress-tracker.md`'s (this file's) own past wording that
+   called the facilitator `services/settlement` — `code-standards.md`
+   defines `services/settlement` as the facilitator CLIENT + ledger
+   reconciliation worker, not the facilitator server itself. Worth a
+   pass to make sure nothing else in the docs repeats that mismatch.
+5. Port the reference repo's Coinflip UI onto the new wallet layer as
+   the first end-to-end playable path.
+6. Deploy the facilitator (and later Socket.io + settlement worker) to
+   the VPS. Needs a domain or `sslip.io` wildcard DNS first.
 
 ## Open Questions
 
