@@ -2,13 +2,14 @@
 
 ## Current Phase
 
-- Build stage — wallet layer done, moving to payments
+- Build stage — wallet layer done and verified in production, moving
+  to payments
 
 ## Current Goal
 
-- Stand up the embedded wallet + x402 deposit skeleton against a
-  Robinhood Chain or BSC testnet before writing game logic — this is
-  the highest-uncertainty part of the stack
+- Build the x402 deposit-required endpoint and Permit2 settlement
+  worker on testnet — this is now the highest-uncertainty part of the
+  stack
 
 ## Completed
 
@@ -16,7 +17,14 @@
   Privy + wagmi/viem. Email and Google login both working; embedded
   wallet provisions automatically with no seed phrase shown; balance
   reads and chain switching confirmed on both Robinhood Chain Testnet
-  and BSC Testnet. Not yet deployed to the VPS.
+  and BSC Testnet.
+- **Wallet skeleton — verified end to end on Vercel
+  (`hoodstack-tawny.vercel.app`).** Google login, external wallet
+  connect, and balance reads confirmed working on both Robinhood
+  Chain Testnet and BSC Testnet on the live production deployment —
+  same checks as the local pass, now confirmed in production. Privy
+  allowed domains and the Google OAuth redirect URI are both
+  correctly configured for the Vercel domain.
 - **Login UI merged** (`feat/login-background`, PR #1) — animated SVG
   background (falling neon chips, meteor streaks), Hoodstack branding,
   reduced-motion support. CodeRabbit checks passed, merged to `main`.
@@ -27,12 +35,14 @@
 
 ## Next Up
 
-1. Deploy the wallet skeleton to the VPS (`npm run build` must pass
-   there) — see `README.md` for the deploy steps
-2. Build the x402 deposit-required endpoint and Permit2 settlement
+1. Build the x402 deposit-required endpoint and Permit2 settlement
    worker on testnet
-3. Port the reference repo's Coinflip UI onto the new wallet layer as
+2. Port the reference repo's Coinflip UI onto the new wallet layer as
    the first end-to-end playable path
+3. Deploy Socket.io and the settlement worker to the VPS once built
+   (Vercel's serverless functions can't host either — see Session
+   Notes). Needs a domain or `sslip.io` wildcard DNS first, since
+   both TLS and Google OAuth's redirect URI require HTTPS.
 
 ## Open Questions
 
@@ -185,7 +195,9 @@ degrades. Reject any provider that cannot satisfy this.
   x402 deposit rail).
 - VPS prepared but UNUSED: user `hoodstack` created, SSH key generated,
   deploy key NOT yet added to GitHub. No domain purchased — this blocks
-  TLS and Google OAuth on the VPS.
+  TLS and Google OAuth on the VPS. Not urgent yet: the wallet skeleton
+  doesn't need the VPS at all (it's fully served from Vercel); the VPS
+  is only needed once Socket.io and the settlement worker exist.
 - Phantom does not support adding Robinhood Chain or BSC as custom EVM
   networks (confirmed from the wallet debug panel showing a stale
   Network: 1 / Ethereum mainnet). Dropped from the BYOW wallet list;
@@ -199,3 +211,9 @@ degrades. Reject any provider that cannot satisfy this.
   MoonPay's partner KYB review flags gambling as a regulated industry
   requiring proof of licensing, which Hoodstack doesn't have yet (see
   Open Questions).
+- **Wallet skeleton fully verified on Vercel production** (Google
+  login, external wallet connect, balance reads on both testnets) —
+  the "Deploy the wallet skeleton to the VPS" item from the prior
+  Next Up list is retired as written; Vercel already serves the
+  wallet skeleton in production. The VPS is now scoped narrowly to
+  Socket.io + the settlement worker, deferred until those are built.
