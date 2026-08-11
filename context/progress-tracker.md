@@ -2,15 +2,15 @@
 
 ## Current Phase
 
-- Build stage — wallet layer done and verified in production, x402
-  deposit route built and building clean, moving to the settlement
-  facilitator
+- Build stage — wallet layer done, x402 deposit route merged, deployed,
+  and verified live in production. Only the self-hosted facilitator
+  stands between here and a real end-to-end deposit.
 
 ## Current Goal
 
 - Build and run a self-hosted x402 facilitator (`services/settlement`)
-  and point `FACILITATOR_URL` at it — the deposit route itself is
-  complete; this is the only remaining blocker on the current unit
+  and point `FACILITATOR_URL` at it for real — currently an `.invalid`
+  placeholder everywhere (Vercel + `.env.local`)
 
 ## Completed
 
@@ -29,16 +29,18 @@
 - **Login UI merged** (`feat/login-background`, PR #1) — animated SVG
   background (falling neon chips, meteor streaks), Hoodstack branding,
   reduced-motion support. CodeRabbit checks passed, merged to `main`.
-- **x402 deposit route built and building clean**
-  (`app/api/x402/deposit/route.ts`, branch `feat/x402-deposit-endpoint`,
-  pushed, PR open for CodeRabbit review). Uses `x402ResourceServer` +
+- **x402 deposit route merged, deployed, verified live**
+  (`src/app/api/x402/deposit/route.ts`). Uses `x402ResourceServer` +
   `HTTPFacilitatorClient` from `@x402/core/server` and `ExactEvmScheme`
   from `@x402/evm/exact/server` — not `@x402/next`, which requires
   Next 16 and conflicts with the `^15.4.8` CVE-2025-66478 pin. Registers
   both `eip155:46630` and `eip155:97`. Hard runtime guards on every
   asset/facilitator env var, no silent fallback to a guessed address.
-  `npm run build` currently fails cleanly on `FACILITATOR_URL is not
-  set` — correct, since no facilitator exists yet.
+  CodeRabbit review passed, PR merged to `main` (squashed).
+  `FACILITATOR_URL`/`HOUSE_TREASURY_ADDRESS` set as explicit,
+  unmistakable placeholders (`.invalid` domain / zero address) in
+  Vercel Production + Preview and in `.env.local`, so builds succeed
+  everywhere without risking a placeholder being mistaken for real.
 - **`next.config.ts`'s `@x402/*` `IgnorePlugin` re-scoped with
   `contextRegExp`** to only fire inside `@coinbase/cdp-sdk`'s own
   directory — the original name-only match would have silently
@@ -56,6 +58,21 @@
   live on both testnets** via `eth_getCode` — deployment chain ID
   decoded from each bytecode blob (`0xB626`=46630, `0x61`=97) as
   additional confirmation beyond non-empty bytecode.
+- **Production incident found and fixed same session: stray root-level
+  `app/` directory silently shadowed `src/app/`.** The project uses
+  `src/app/` (per `tsconfig.json`'s `@/*` → `./src/*` and every
+  existing file), but the very first scaffold command this session
+  created `app/api/x402/deposit/` at repo root instead. Next.js picked
+  the root `app/` and stopped building `src/app/` entirely — every
+  build from that point only ever listed `/api/x402/deposit` in its
+  route table, never `/`. Went unnoticed through local testing, PR
+  review, and merge; surfaced as a 404 on `hoodstack-tawny.vercel.app`
+  after merging to `main`. Root cause and fix were both empirically
+  verified in an isolated sandbox reproduction before shipping,
+  not just reasoned about. Fixed via `git mv app/api/x402
+  src/app/api/x402`; confirmed live via `curl` (200) and a visual
+  screenshot showing the real login page and working wallet/chain
+  switcher post-fix.
 
 ## In Progress
 
@@ -65,16 +82,14 @@
 
 1. Build a self-hosted x402 facilitator (`services/settlement`) using
    `@x402/evm`'s facilitator-side APIs. Point `FACILITATOR_URL` at it
-   (localhost for dev, VPS later).
-2. Confirm `HOUSE_TREASURY_ADDRESS` is actually set in `.env.local` —
-   its guard hasn't been reached yet since `FACILITATOR_URL` fails
-   first; unconfirmed either way.
-3. `feat/x402-deposit-endpoint` pushed, PR open for CodeRabbit
-   review — address any findings, then merge to `main`. Do not merge
-   before CodeRabbit runs, same pattern as PR #1.
-4. Port the reference repo's Coinflip UI onto the new wallet layer as
+   for real (localhost for dev, VPS later) — currently an `.invalid`
+   placeholder everywhere.
+2. Decide who holds the house treasury's signing key —
+   `HOUSE_TREASURY_ADDRESS` is currently the zero address as a
+   placeholder everywhere, not a real value.
+3. Port the reference repo's Coinflip UI onto the new wallet layer as
    the first end-to-end playable path
-5. Deploy Socket.io and the settlement worker to the VPS once built.
+4. Deploy Socket.io and the settlement worker to the VPS once built.
    Needs a domain or `sslip.io` wildcard DNS first.
 
 ## Open Questions
@@ -264,3 +279,22 @@ degrades. Reject any provider that cannot satisfy this.
   question above.
 - **`contracts/mock-usdt/`** is a Foundry project nested in the main
   repo, gitignored for `lib/`, `out/`, `cache/`, `broadcast/`.
+- **This project's real app directory is `src/app/`, not `app/`** —
+  `code-standards.md`'s File Organization section currently lists
+  paths like `app/(marketing)/` and `app/api/` without the `src/`
+  prefix, which doesn't match reality and directly caused tonight's
+  incident (see Completed). Worth fixing that doc so neither a future
+  session nor Claude Code gets misled the same way again.
+- **Vercel CLI needed `vercel link` before any `env add` command
+  worked** — this repo's deploys had only ever gone through git-push
+  auto-deploy before, never the CLI.
+- **`vercel env add <name> preview` is a two-prompt interactive
+  command (value, then git branch) that cannot be reliably driven via
+  piped stdin** — `echo`/`printf` pipes produced silent partial
+  failures (var added to Production but not Preview, no error shown)
+  across several attempts. Run it fully interactively; hit Enter on
+  the blank "Git branch?" prompt to apply to all preview branches.
+- **The `app/`→`src/app/` hotfix was committed directly to `main`**,
+  bypassing the branch → PR → CodeRabbit flow used for everything else
+  this session and for PR #1. Deliberate one-off for an active
+  production 404, not a new pattern to repeat.
