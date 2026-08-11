@@ -451,3 +451,49 @@ degrades. Reject any provider that cannot satisfy this.
 - **`@x402/fetch@2.21.0` added as a new npm dependency** -- needed for
   `wrapFetchWithPayment` client-side; not covered by `@x402/core` or
   `@x402/evm` alone.
+
+## Session Notes (cont. 4)
+
+- **Postgres/Prisma didn't exist in this repo at all going into
+  tonight** -- `find . -name schema.prisma` came back empty despite
+  `architecture.md` documenting Postgres as the storage layer.
+  Confirmed via `grep -i prisma package.json` (nothing) and
+  `.env.local` (no `DATABASE_URL`) before installing anything.
+- **Prisma 7.9.1 is a major version released after this chat's
+  reliable knowledge cutoff** -- verified its driver-adapter
+  requirement, custom `output` path, and `migrate dev` no longer
+  auto-running `generate` against Prisma's own current docs before
+  writing any code, rather than assuming from older training
+  knowledge. Worth remembering for any future Prisma-adjacent work
+  this project does: check current docs first, don't assume.
+- **`services/ledger` was fully built, verified against the real
+  settled deposit, and had a clean `npm run build` locally before any
+  git operations** -- multiple real bugs caught in that sequence, not
+  hypothetical: a `z.infer` vs `z.input` type mismatch that made
+  `creditDeposit()` uncallable with a plain amount; BigInt literal
+  syntax (`0n`, `1_011_000n`) rejected by the TS build target across
+  three files; and an early batch of file-creation commands that
+  silently no-op'd (heredocs referencing files that were never
+  actually created), caught by the next command failing rather than
+  by review.
+- **Privy DID lookup done via their REST API** (`POST
+  /v1/users/wallet/address`, Basic auth with app ID + app secret)
+  instead of hunting the dashboard -- confirmed against Privy's
+  current API docs first since it's a secret-bearing request. DID for
+  `0xc2413696576176d1e31D55a2DEdA609906a15596`:
+  `did:privy:cmsn52rxu02ye0cl11k3aqoy0`. `PRIVY_APP_SECRET` added to
+  `.env.local` only (never committed -- confirmed via `git log --all
+  -- .env.local .env` coming back empty before any commit).
+- **Vercel build failed on the first push**: `src/generated/prisma`
+  is correctly gitignored as regenerable output, but nothing in the
+  Vercel pipeline generated it before `next build` ran. Fixed with
+  `"postinstall": "prisma generate"` in `package.json` -- confirmed
+  via Prisma's own config reference that `prisma generate` (unlike
+  `migrate`/`db push`) doesn't require `DATABASE_URL` to be set, so
+  this didn't also require touching Vercel env vars.
+- **PR #5 merged (squashed) to `main`.** A Vercel deployment
+  screenshot taken right after showed `Source: feat/ledger-deposit-credit`
+  at the pre-merge commit, labeled `Environment: Production`, on a
+  branch-preview-style domain -- not `hoodstack-tawny.vercel.app`.
+  Flagged in Next Up to confirm the real production domain reflects
+  the post-merge `main` commit before trusting it.
