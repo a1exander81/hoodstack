@@ -323,3 +323,17 @@ degrades. Reject any provider that cannot satisfy this.
   bypassing the branch → PR → CodeRabbit flow used for everything else
   this session and for PR #1. Deliberate one-off for an active
   production 404, not a new pattern to repeat.
+
+## Session Notes (cont. 2)
+
+- Landing page direction picked for `app/(marketing)`: energetic/neon
+  hero (AI-generated reference, not a competitor asset), signature
+  element is a live Crash-multiplier curve rather than stock rocket/chip
+  imagery, ticker keeps "recent wins" energy without wallet-flex or
+  degen slang. Design plan proposed, nothing built yet — was waiting on
+  `find src/app -maxdepth 2 -type d` to confirm whether `(marketing)`
+  already exists and what the root layout looks like before placing
+  files. Pick this up next session with that command first.
+- SVG background swap for the login page: still an open, unconfirmed
+  ask. The uploaded file was a mismatched restaurant/food template, not
+  intended for Hoodstack — nothing changed on the login page.
