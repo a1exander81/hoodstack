@@ -2,16 +2,19 @@
 
 ## Current Phase
 
-- Build stage — wallet layer, x402 deposit route, and the self-hosted
-  facilitator are all built, deployed (locally), and verified reachable.
-  A real signed deposit through the browser UI is the last unverified
-  link before ledger work can start in earnest.
+- Build stage -- wallet layer, x402 deposit route (rewritten around the
+  real `x402HTTPResourceServer` flow), and the self-hosted facilitator
+  are all built, deployed (locally), and now verified end to end: a
+  real signed deposit settled on Robinhood Chain Testnet. Ledger work
+  (crediting the confirmed deposit to a user's table balance) is next.
 
 ## Current Goal
 
-- Drive one real deposit through the actual browser UI (funded embedded
-  wallet signing a real `PAYMENT` payload) to prove `/verify` → `/settle`
-  end to end, not just that the facilitator is reachable.
+- Wire the confirmed on-chain settlement from tonight's proven
+  `/verify` -> `/settle` flow into `services/ledger` as the first
+  reviewed ledger increment (protected file -- see `ai-workflow-rules.md`).
+  Everything up to a confirmed settlement is now proven; nothing after
+  that point exists yet.
 
 ## Completed
 
@@ -92,6 +95,53 @@
   Gas wallet (dedicated, never the treasury key): funded with testnet ETH
   on Robinhood Chain Testnet and testnet BNB on BSC Testnet via each
   chain's official faucet.
+- **Real signed deposit settled end to end on Robinhood Chain Testnet --
+  the session's actual goal.** A funded embedded wallet
+  (`0xc2413696576176d1e31D55a2DEdA609906a15596`) signed a real EIP-3009
+  `transferWithAuthorization` for 1.011 USDG through the browser UI;
+  the self-hosted facilitator's `/verify` and `/settle` both succeeded
+  against it (`result.success: true`, tx
+  `0x0244a82add3e8e809dc409e3a5858d6c409389437698e9c68d6d5320f9563187`).
+  Independently confirmed via `cast call balanceOf` on the destination
+  address -- `1011000` raw (1.011 USDG, matching the signed amount to
+  the atomic unit), not just a green log line.
+- **Deposit route rewritten, not just patched.** The original route
+  hand-built a bare `NextResponse.json()` 402 body; that's not the
+  real x402 v2 wire format (a `PAYMENT-REQUIRED` header, built via
+  `x402HTTPResourceServer`) and was missing required
+  `PaymentRequirements` fields (`maxTimeoutSeconds`, `extra`). Root
+  cause found by reading the real installed `@x402/core`/`@x402/evm`
+  `.d.ts`/`.js` source directly, not assumed from docs.
+- **`src/lib/x402-next-adapter.ts` added** -- a trimmed port of
+  `@x402/next`'s `NextAdapter`/`withX402` (Apache-2.0). Can't install
+  `@x402/next` directly: its `package.json` pins
+  `peerDependencies: { next: ">=16.2.6" }`, and this repo is
+  deliberately on `^15.4.8` for CVE-2025-66478. Everything the port
+  touches (`NextRequest`/`NextResponse`/`Headers`) is stable Web
+  App Router API -- the peer range looks like a support-matrix choice,
+  not a real Next 16 dependency. Revisit swapping in the real package
+  if/when this repo moves to Next 16.
+- **`@x402/fetch@2.21.0` added as a new dependency** -- the client-side
+  402-challenge/sign/retry loop (`wrapFetchWithPayment`) isn't in
+  `@x402/core/client`; it's this separate package. Matches the
+  `@x402/core`/`@x402/evm` version family exactly.
+- **Deposit request no longer takes `network` from the client body.**
+  Both testnets are now offered as alternatives in the 402's
+  `accepts[]`; the client SDK matches whichever the connected wallet's
+  current chain actually supports. Chosen deliberately over the
+  original body-field design -- matches `project-overview.md`'s "chain
+  choice is a backend/operator decision" goal more directly.
+- **USDG's real EIP-712 domain verified on-chain, not assumed:**
+  `name: "Global Dollar"`, `version: "1"` -- confirmed by reproducing
+  the actual on-chain `DOMAIN_SEPARATOR()` locally with `viem` across
+  candidate version strings until one matched exactly. Wired into the
+  Robinhood Chain `PaymentOption`'s `extra` field.
+- **`/dev/x402-test` added** -- a dev-only browser page for driving a
+  signed deposit through a connected wallet. USDG/Robinhood Chain
+  Testnet only for now; BSC/MockUSDT needs a fuller `ClientEvmSigner`
+  (`signTransaction`/`getTransactionCount`/`estimateFeesPerGas`) for
+  Permit2's ERC-20 approval gas sponsorship extension, not yet
+  implemented.
 
 ## In Progress
 
@@ -99,23 +149,34 @@
 
 ## Next Up
 
-1. Drive a real signed deposit through the browser UI against the local
-   facilitator — proves `/verify` → `/settle`, not just reachability.
-2. Decide: keep or strip the temporary `[http]` request logger added to
-   `facilitator/index.ts` for diagnosis this session — asked, not yet
-   answered.
-3. Decide who holds the house treasury's signing key —
-   `HOUSE_TREASURY_ADDRESS` is currently the zero address as a
-   placeholder everywhere, not a real value.
-4. Fix `progress-tracker.md`'s (this file's) own past wording that
-   called the facilitator `services/settlement` — `code-standards.md`
-   defines `services/settlement` as the facilitator CLIENT + ledger
-   reconciliation worker, not the facilitator server itself. Worth a
-   pass to make sure nothing else in the docs repeats that mismatch.
-5. Port the reference repo's Coinflip UI onto the new wallet layer as
-   the first end-to-end playable path.
-6. Deploy the facilitator (and later Socket.io + settlement worker) to
-   the VPS. Needs a domain or `sslip.io` wildcard DNS first.
+1. Wire the confirmed deposit settlement into `services/ledger` --
+   protected, needs its own reviewed increment per
+   `ai-workflow-rules.md`.
+2. Real house treasury custody decision. `HOUSE_TREASURY_ADDRESS` is
+   currently a disposable test address set only in local
+   `.env.local` for tonight's verification -- it is NOT a custody
+   answer and must not reach a real deployment as-is.
+3. Verify MockUSDT's real EIP-712 name/version on BSC Testnet
+   on-chain (same method used for USDG tonight) before testing the
+   BSC deposit path.
+4. Add `USDT_BSC_TESTNET_ADDRESS` to Vercel Production + Preview --
+   currently local-only, added this session after being found
+   missing entirely from `.env.local`.
+5. Decide: keep or strip the temporary `[http]` request logger in
+   `facilitator/index.ts` -- asked, still not answered.
+6. Fix the embedded-wallet chain-switch bug found tonight: Privy's
+   `defaultChain: robinhoodChainTestnet` did not actually put a fresh
+   embedded wallet on Robinhood Chain Testnet -- it showed `Network: 1`
+   (Ethereum mainnet) until manually switched via the wallet debug
+   panel's chain buttons. A real player would silently hit this.
+7. Fix the React "missing key prop" console warning surfaced tonight
+   (likely the wallet debug panel mapping `supportedChains` without a
+   `key` -- not confirmed, not investigated further tonight).
+8. Reconcile `services/settlement` vs `facilitator/` naming across
+   the docs -- still open from last session.
+9. Port the reference repo's Coinflip UI onto the wallet layer.
+10. Deploy the facilitator (and later Socket.io + settlement worker)
+    to the VPS. Needs a domain or `sslip.io` wildcard DNS first.
 
 ## Open Questions
 
@@ -129,7 +190,9 @@
   (self-exclusion, deposit caps, cool-off periods) are required for
   the target jurisdictions?
 - Who holds the house treasury's signing key for settlement —
-  self-hosted HSM, or a custody provider?
+  self-hosted HSM, or a custody provider? **Still unresolved** -- a
+  disposable test address was set locally tonight purely to unblock
+  verifying `/verify`->`/settle`, not as a candidate answer.
 - Does the CDP-hosted x402 facilitator cover Robinhood Chain and BSC,
   or does this need a self-hosted facilitator? (see
   `x402-payment-architecture.md`) **Partially answered:**
@@ -144,6 +207,10 @@
 - When must users be prompted to link a backup login method, and is it
   a hard gate before first deposit? (see Session Notes — social-only
   login can permanently orphan a funded wallet)
+- Does MockUSDT's BSC Testnet deployment support EIP-3009, or does
+  it need the Permit2 path? (`x402-payment-architecture.md` already
+  assumes Permit2 for BSC USDT generally -- worth confirming against
+  the actual `MockUSDT` Foundry contract before verifying its domain.)
 
 ## Architecture Decisions
 
@@ -337,3 +404,50 @@ degrades. Reject any provider that cannot satisfy this.
 - SVG background swap for the login page: still an open, unconfirmed
   ask. The uploaded file was a mismatched restaurant/food template, not
   intended for Hoodstack — nothing changed on the login page.
+
+## Session Notes (cont. 3)
+
+- **Real deposit settled end to end** -- tx
+  `0x0244a82add3e8e809dc409e3a5858d6c409389437698e9c68d6d5320f9563187`
+  on Robinhood Chain Testnet, 1.011 USDG,
+  `0xc2413696576176d1e31D55a2DEdA609906a15596` -> the disposable test
+  treasury address. This was tonight's actual goal from the top of
+  this file -- achieved.
+- **Deposit route was fundamentally incomplete, not just missing
+  verify/settle.** Reading the real installed `@x402/core@2.21.0` /
+  `@x402/evm@2.21.0` `.d.ts` and `.js` source (not just package docs)
+  surfaced that the original hand-built 402 response skipped the
+  SDK's actual `PAYMENT-REQUIRED` header encoding and was missing
+  required `PaymentRequirements` fields entirely. Confirmed by reading
+  `@x402/next`'s and `@x402/express`'s real compiled source (pulled via
+  `npm pack` into a scratch sandbox, not assumed from any blog/doc) --
+  `@x402/next`'s adapter code turned out to be pure stable
+  `next/server` API despite its `>=16.2.6` peer-dependency pin, so it
+  was ported rather than rewritten from scratch.
+- **USDG's EIP-712 domain (`name`/`version`) verified by reproducing
+  the on-chain `DOMAIN_SEPARATOR()` locally**, not guessed -- `version()`
+  reverts on the token itself (no getter), so candidate version
+  strings were hashed with `viem` until one matched the real on-chain
+  separator exactly. `version: "1"` confirmed this way.
+- **`USDT_BSC_TESTNET_ADDRESS` was completely missing from
+  `.env.local`** despite MockUSDT having been deployed and documented
+  in a prior session -- added locally tonight
+  (`0xaA5E574E9cb6F8df5A47f2034d520AA7cee8a193`), still needs adding
+  to Vercel.
+- **Privy embedded wallet chain bug found:** a fresh embedded wallet
+  did not land on `robinhoodChainTestnet` despite
+  `defaultChain: robinhoodChainTestnet` in `app-providers.tsx` -- it
+  showed `Network: 1` until manually switched via the debug panel's
+  chain-switch buttons. Not investigated further; worth reproducing
+  cleanly and possibly filing against Privy if it's their bug rather
+  than a config gap here.
+- **Design change:** the deposit request no longer takes `network`
+  from the client body -- both testnets are declared as alternatives
+  in the 402 `accepts[]`, and the client SDK's registered scheme
+  naturally matches whichever chain the connected wallet is actually
+  on. Chosen with the person's explicit go-ahead mid-session, since
+  it better matches `project-overview.md`'s stated goal that chain
+  choice is a backend decision, not a player-facing one.
+- **`@x402/fetch@2.21.0` added as a new npm dependency** -- needed for
+  `wrapFetchWithPayment` client-side; not covered by `@x402/core` or
+  `@x402/evm` alone.
