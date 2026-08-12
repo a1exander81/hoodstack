@@ -2,19 +2,25 @@
 
 ## Current Phase
 
-- Build stage -- wallet layer, x402 deposit route (rewritten around the
-  real `x402HTTPResourceServer` flow), and the self-hosted facilitator
-  are all built, deployed (locally), and now verified end to end: a
-  real signed deposit settled on Robinhood Chain Testnet. Ledger work
-  (crediting the confirmed deposit to a user's table balance) is next.
+- Build stage -- wallet layer, x402 deposit route, self-hosted
+  facilitator, and `services/ledger` (deposit-credit only, PR #5
+  merged) are all built and verified end to end: a real signed deposit
+  settled on Robinhood Chain Testnet and credited into the ledger
+  against a real local Postgres database, with idempotency proven via
+  a retried credit attempt. Production has no reachable database yet
+  -- that's the next blocker, not a new build unit.
 
 ## Current Goal
 
-- Wire the confirmed on-chain settlement from tonight's proven
-  `/verify` -> `/settle` flow into `services/ledger` as the first
-  reviewed ledger increment (protected file -- see `ai-workflow-rules.md`).
-  Everything up to a confirmed settlement is now proven; nothing after
-  that point exists yet.
+- Get a real, reachable Postgres database in front of Vercel's
+  serverless functions -- `DATABASE_URL` doesn't exist in Vercel at
+  all, and a Supabase project was created at the dashboard level this
+  session but never wired into the repo (no connection string
+  anywhere). Local Homebrew Postgres proved the ledger logic correct
+  but can't be reached from production. Once resolved, wire
+  `creditDeposit()` into an actual call site (no `services/settlement`
+  worker or route calls it yet -- this session proved the ledger
+  itself, not the pipeline into it).
 
 ## Completed
 
@@ -142,6 +148,40 @@
   (`signTransaction`/`getTransactionCount`/`estimateFeesPerGas`) for
   Permit2's ERC-20 approval gas sponsorship extension, not yet
   implemented.
+- **`services/ledger` built and merged** (PR #5, `feat/ledger-deposit-credit`).
+  `creditDeposit()` is the only entry point that can mutate a table
+  balance; idempotent via a DB-level unique constraint on `txHash`
+  (not app-level check-then-insert -- correct under concurrent
+  retries). `Money` is a branded `bigint` in integer minor units;
+  since USDG/USDT are both 6-decimal stablecoins here, ledger
+  micro-USD units equal raw on-chain token amounts 1:1, no scaling
+  needed. Verified against the REAL settled Robinhood Chain Testnet
+  deposit from a prior session (tx `0x0244a82add...9563187`, 1.011
+  USDG) -- credited correctly, and a retried call with the same tx
+  hash was rejected without double-crediting.
+- **Postgres + Prisma set up from scratch this session** -- neither
+  existed in the repo despite `architecture.md` listing them as the
+  storage layer; this was a real gap, not a missing file. Local dev
+  via Homebrew `postgresql@16` (trust auth, no password, DB name
+  `hoodstack_dev`). Landed on Prisma 7.9.1, materially different from
+  prior versions: driver adapters are now mandatory
+  (`@prisma/adapter-pg` + `pg`), the generated client goes to a custom
+  `output` path (`src/generated/prisma`) instead of `@prisma/client`,
+  connection config moved to `prisma.config.ts`, and `migrate dev` no
+  longer auto-runs `generate` -- needed as an explicit step, and as an
+  explicit `postinstall` script for Vercel (the generated client is
+  correctly gitignored as regenerable output, so a fresh clone
+  produces nothing without one -- this broke the first Vercel deploy
+  of the PR, fixed via `"postinstall": "prisma generate"` in
+  `package.json`).
+- **Identity correction:** the "funded embedded wallet"
+  (`0xc2413696576176d1e31D55a2DEdA609906a15596`) referenced above in
+  this file is actually an external Rabby Wallet connection per
+  Privy's own API (`wallet_client_type: "rabby_wallet"`,
+  `connector_type: "injected"`), not a Privy-provisioned embedded
+  wallet. Doesn't affect the ledger (same DID either way), but matters
+  for the backup-login-method open question below, which only applies
+  to embedded wallets.
 
 ## In Progress
 
@@ -149,34 +189,48 @@
 
 ## Next Up
 
-1. Wire the confirmed deposit settlement into `services/ledger` --
-   protected, needs its own reviewed increment per
-   `ai-workflow-rules.md`.
-2. Real house treasury custody decision. `HOUSE_TREASURY_ADDRESS` is
+1. Hosted Postgres for production (see Current Goal) -- Supabase vs
+   Neon vs Vercel Postgres still undecided; Supabase project exists
+   in the dashboard but is fully unwired.
+2. Confirm `hoodstack-tawny.vercel.app` (the actual production domain)
+   reflects PR #5's squash-merge commit on `main` -- a deployment
+   screenshot from tonight showed `Source: feat/ledger-deposit-credit`
+   (pre-merge commit `4a2b3ec`) labeled `Environment: Production` on a
+   branch-preview-style domain, not the main production alias. Almost
+   certainly a stale/pre-merge deployment shown out of order, but
+   worth a direct look before trusting the production domain is
+   current, given this PR touches balance-mutating code.
+3. `facilitator/` still isn't committed to git -- confirmed via
+   `git status` this session (shows as untracked). No longer just a
+   naming question carried from a prior session; it's a confirmed gap.
+4. Real house treasury custody decision. `HOUSE_TREASURY_ADDRESS` is
    currently a disposable test address set only in local
-   `.env.local` for tonight's verification -- it is NOT a custody
-   answer and must not reach a real deployment as-is.
-3. Verify MockUSDT's real EIP-712 name/version on BSC Testnet
-   on-chain (same method used for USDG tonight) before testing the
+   `.env.local` -- it is NOT a custody answer and must not reach a
+   real deployment as-is.
+5. Verify MockUSDT's real EIP-712 name/version on BSC Testnet
+   on-chain (same method used for USDG previously) before testing the
    BSC deposit path.
-4. Add `USDT_BSC_TESTNET_ADDRESS` to Vercel Production + Preview --
-   currently local-only, added this session after being found
-   missing entirely from `.env.local`.
-5. Decide: keep or strip the temporary `[http]` request logger in
+6. Add `USDT_BSC_TESTNET_ADDRESS` to Vercel Production + Preview --
+   currently local-only.
+7. Decide: keep or strip the temporary `[http]` request logger in
    `facilitator/index.ts` -- asked, still not answered.
-6. Fix the embedded-wallet chain-switch bug found tonight: Privy's
+8. Fix the embedded-wallet chain-switch bug: Privy's
    `defaultChain: robinhoodChainTestnet` did not actually put a fresh
    embedded wallet on Robinhood Chain Testnet -- it showed `Network: 1`
-   (Ethereum mainnet) until manually switched via the wallet debug
-   panel's chain buttons. A real player would silently hit this.
-7. Fix the React "missing key prop" console warning surfaced tonight
-   (likely the wallet debug panel mapping `supportedChains` without a
-   `key` -- not confirmed, not investigated further tonight).
-8. Reconcile `services/settlement` vs `facilitator/` naming across
-   the docs -- still open from last session.
-9. Port the reference repo's Coinflip UI onto the wallet layer.
-10. Deploy the facilitator (and later Socket.io + settlement worker)
+   until manually switched via the wallet debug panel. A real player
+   would silently hit this.
+9. Fix the React "missing key prop" console warning (likely the
+   wallet debug panel mapping `supportedChains` without a `key` --
+   not confirmed).
+10. Reconcile `services/settlement` vs `facilitator/` naming across
+    the docs -- still open.
+11. Port the reference repo's Coinflip UI onto the wallet layer.
+12. Deploy the facilitator (and later Socket.io + settlement worker)
     to the VPS. Needs a domain or `sslip.io` wildcard DNS first.
+13. Add `PRIVY_APP_SECRET` to Vercel once server-side Privy lookups
+    (like tonight's wallet-address-to-DID lookup) are needed in
+    production -- currently local-only in `.env.local`, correctly
+    excluded from git.
 
 ## Open Questions
 
@@ -247,6 +301,17 @@
   linked addresses (embedded + external) sharing one balance. Two
   separately-created DIDs are never auto-merged, even for the same
   human. See `architecture.md` Auth and Access Model.
+- `services/ledger` idempotency is enforced at the DB level (a unique
+  constraint on `txHash`, caught via error code on conflict), not via
+  an app-level check-then-insert -- the latter has a race window under
+  concurrent retries (e.g. a duplicated webhook) that the DB
+  constraint doesn't.
+- `Money` is a branded `bigint`, not a plain `bigint` or `number` --
+  chosen so the type system, not convention, prevents an unvalidated
+  raw amount from reaching a ledger mutation. `services/ledger`'s
+  exported input type uses `z.input<...>`, not `z.infer<...>`, since
+  the latter is the schema's post-transform (already-branded) output
+  type and can't be satisfied by a caller passing a plain amount.
 
 ## Standing Constraint: Wallet Provider Must Be a wagmi Connector
 
