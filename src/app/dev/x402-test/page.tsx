@@ -13,6 +13,7 @@
 
 import { useState } from "react";
 import { useAccount, useWalletClient } from "wagmi";
+import { usePrivy } from "@privy-io/react-auth";
 import type { Account, WalletClient } from "viem";
 import { x402Client, wrapFetchWithPayment } from "@x402/fetch";
 import { registerExactEvmScheme } from "@x402/evm/exact/client";
@@ -39,6 +40,7 @@ function wagmiToClientSigner(walletClient: WalletClient): ClientEvmSigner {
 export default function X402DepositTestPage() {
   const { address, chain } = useAccount();
   const { data: walletClient } = useWalletClient();
+  const { getAccessToken } = usePrivy();
   const [amount, setAmount] = useState("1.0");
   const [log, setLog] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -55,6 +57,15 @@ export default function X402DepositTestPage() {
     setBusy(true);
     setLog([]);
     try {
+      // The deposit route now gates on identity BEFORE settlement (see
+      // services/settlement/verify-session.ts) -- no Authorization header
+      // means a 401 before any on-chain transaction is submitted.
+      const accessToken = await getAccessToken();
+      if (!accessToken) {
+        appendLog("No Privy access token -- log in through the app first.");
+        return;
+      }
+
       const signer = wagmiToClientSigner(walletClient);
       const client = new x402Client();
       registerExactEvmScheme(client, { signer });
@@ -66,7 +77,10 @@ export default function X402DepositTestPage() {
 
       const response = await fetchWithPayment("/api/x402/deposit", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
         body: JSON.stringify({ amount }),
       });
 
