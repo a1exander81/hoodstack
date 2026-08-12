@@ -403,6 +403,31 @@
   - **Production confirmed serving the merge**: `vercel inspect
     hoodstack-tawny.vercel.app --logs` shows `Commit: 1922147`,
     matching `main`'s real merge commit -- not just a "Ready" label.
+- **`services/settlement`'s docs corrected to describe what's real, not
+  what was planned** (PR #8, `docs/fix-settlement-description`, squash-
+  merged to `main` as `9dcddad`). `architecture.md` and
+  `x402-payment-architecture.md` previously described `services/settlement`
+  as a background worker; both now correctly describe it as a
+  reconciliation module invoked synchronously via
+  `resourceServer.onAfterSettle(...)`, per PR #7's actual implementation
+  (see above). The withdrawal-flow section is now flagged as design-only,
+  not yet validated against this real pattern. Closes out the item raised
+  at the top of this file's Next Up section for two sessions running.
+- **MockUSDT confirmed to have neither EIP-3009 nor EIP-2612 `permit`,
+  and Permit2's real EIP-712 domain verified live on BSC Testnet.**
+  Read `contracts/mock-usdt/src/Counter.sol` directly rather than
+  assuming -- it's a bare OpenZeppelin `ERC20`, so the BSC deposit path
+  has no domain of its own to check and must go through Permit2.
+  Permit2's actual domain-separator formula pulled from Uniswap's real
+  `EIP712.sol` source (`name: "Permit2"`, deliberately no `version`
+  field, unlike most EIP-712 domains) and reproduced locally with viem
+  against chain ID 97 -- matched the live on-chain `DOMAIN_SEPARATOR()`
+  byte-for-byte
+  (`0x4b0ae55c3d01d102f0a8e756724fe8f86b39420717f3217a9a35504cbfdf4553`),
+  confirmed programmatically, not eyeballed. Resolves the open question
+  about MockUSDT/EIP-3009/Permit2 below. Still unbuilt: the facilitator's
+  ERC-20 Approval Gas Sponsorship path that actually uses this domain for
+  the one-time approval (see Next Up).
 
 ## In Progress
 
@@ -414,9 +439,16 @@
    currently a disposable test address set only in local
    `.env.local` -- it is NOT a custody answer and must not reach a
    real deployment as-is.
-2. Verify MockUSDT's real EIP-712 name/version on BSC Testnet
-   on-chain (same method used for USDG previously) before testing the
-   BSC deposit path.
+2. Build and test the facilitator's ERC-20 Approval Gas Sponsorship
+   path for BSC deposits. Confirmed this session: `MockUSDT` is a
+   bare OpenZeppelin `ERC20` (read directly from
+   `contracts/mock-usdt/src/Counter.sol`) -- no EIP-3009, no
+   EIP-2612 `permit`, no domain of its own. The BSC deposit path
+   must go through Permit2, exactly as `x402-payment-architecture.md`
+   already assumed, but the facilitator-sponsored one-time approval
+   this requires hasn't been built or tested. Permit2's own domain is
+   now verified live on BSC Testnet (see Completed), so this is
+   unblocked to start.
 3. Decide: keep or strip the temporary `[http]` request logger in
    `facilitator/index.ts` -- now merged to `main` as-is; still an open
    decision, not blocking anything.
@@ -428,38 +460,26 @@
 5. Fix the React "missing key prop" console warning (likely the
    wallet debug panel mapping `supportedChains` without a `key` --
    not confirmed).
-6. Correct `architecture.md` and `x402-payment-architecture.md`:
-   both describe `services/settlement` as a "background worker" that
-   submits signed authorizations to chain. What actually got built
-   (PR #7) is NOT a worker -- it's a synchronous
-   `resourceServer.onAfterSettle` hook running inside the same
-   request as the deposit route, because that's the only point in
-   the real `@x402/core` SDK with the confirmed tx hash (see
-   Completed). The docs should describe what's real, not what was
-   planned before that was known. This also folds in the older
-   "reconcile services/settlement vs facilitator/ naming" item -- the
-   two are now clearly distinct in practice (facilitator/ = on-chain
-   verify/settle mechanics, services/settlement = reconciling a
-   settled payment into the ledger), the docs just haven't caught up.
-7. Port the reference repo's Coinflip UI onto the wallet layer.
-8. Port the landing/lobby mockup (`hoodstack-landing-mockup.html`)
+6. Port the reference repo's Coinflip UI onto the wallet layer.
+7. Port the landing/lobby mockup (`hoodstack-landing-mockup.html`)
    into real `src/app/(marketing)` components against HeroUI --
    still gated behind `find src/app -maxdepth 2 -type d` to confirm
    whether `(marketing)` already exists and what the root layout
    looks like, flagged three sessions ago and still never run.
-9. Deploy the facilitator (committed and pullable from git) -- and
+8. Deploy the facilitator (committed and pullable from git) -- and
    later Socket.io (game state and the newly architected chat
    feature) -- to the VPS. Needs a domain or `sslip.io` wildcard DNS
    first. `services/settlement` does NOT belong on this list -- it
    runs inline inside the Vercel-deployed Next.js app, not as a
-   separate VPS worker (see item 6 above). Chat itself is fully
-   scoped with two decisions locked (wallet-prefix usernames,
-   auto-delete retention, see Completed) but has no code yet --
-   blocked on this same step.
-10. Add `PRIVY_APP_SECRET` to Vercel once server-side Privy lookups
-    (like the wallet-address-to-DID lookup) are needed in
-    production -- currently local-only in `.env.local`, correctly
-    excluded from git.
+   separate VPS worker (`architecture.md` and
+   `x402-payment-architecture.md` now describe this correctly, see
+   Completed). Chat itself is fully scoped with two decisions locked
+   (wallet-prefix usernames, auto-delete retention, see Completed)
+   but has no code yet -- blocked on this same step.
+9. Add `PRIVY_APP_SECRET` to Vercel once server-side Privy lookups
+   (like the wallet-address-to-DID lookup) are needed in
+   production -- currently local-only in `.env.local`, correctly
+   excluded from git.
 
 ## Open Questions
 
@@ -490,10 +510,6 @@
 - When must users be prompted to link a backup login method, and is it
   a hard gate before first deposit? (see Session Notes — social-only
   login can permanently orphan a funded wallet)
-- Does MockUSDT's BSC Testnet deployment support EIP-3009, or does
-  it need the Permit2 path? (`x402-payment-architecture.md` already
-  assumes Permit2 for BSC USDT generally -- worth confirming against
-  the actual `MockUSDT` Foundry contract before verifying its domain.)
 - Is chat moderation a compliance requirement in the target
   jurisdictions, not just a UX nicety -- real-money chat carries
   harassment, public outcome disputes, and off-platform payment
