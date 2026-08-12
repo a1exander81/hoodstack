@@ -104,6 +104,16 @@ const routeConfig: RouteConfig = {
       maxTimeoutSeconds: 300,
     },
   ],
+  // Declared once for the whole route -- RouteConfig.extensions is not
+  // per-network-entry, so this also applies to the Robinhood/USDG accept
+  // option above. Expected to be harmless there (USDG signs via EIP-3009
+  // directly and shouldn't enter the Permit2-approval-signing path this
+  // gates), but that's not independently confirmed -- watch for it in
+  // testing. Value is unused beyond truthiness by the client SDK
+  // (trySignErc20ApprovalExtension only checks
+  // context?.extensions?.[key] for existence) -- see erc20ApprovalGasSponsoring
+  // in @x402/evm's compiled source (src/shared/extensions/gasSponsoring.ts).
+  extensions: { erc20ApprovalGasSponsoring: true },
 };
 
 export const POST = withX402(
