@@ -7,22 +7,25 @@
   merged) are all built and verified end to end: a real signed deposit
   settled on Robinhood Chain Testnet and credited into the ledger
   against a real local Postgres database, with idempotency proven via
-  a retried credit attempt. Production's database was the last blocker
-  -- resolved this session (Neon, see Completed). `creditDeposit()`
-  still has no call site wiring it into the deposit flow; that's the
-  actual gap now, not database reachability.
+  a retried credit attempt. Production's database, the production
+  domain's currency, and `facilitator/` being untracked are all
+  resolved (see Completed). `creditDeposit()` still has no call site
+  wiring it into the deposit flow -- that remains the actual gap in
+  the deposit pipeline. A landing/lobby mockup exists (not yet ported
+  into real components) and the chat feature is fully architected with
+  two decisions locked, but neither is built -- both are new threads
+  from this session, not carried-over blockers.
 
 ## Current Goal
 
-- Hosted Postgres resolved this session (Neon, see Completed) --
-  Vercel Production and Preview both have working `DATABASE_URL`/
-  `DIRECT_URL`, verified with a real round-trip query against the
-  exact pooled connection string Vercel holds, not just a CLI success
-  message. No single actively-blocking item remains; top candidates
-  from Next Up are confirming the production domain reflects PR #5,
-  committing `facilitator/`, and wiring `creditDeposit()` into an
-  actual call site now that there's a real production database behind
-  it.
+- No single actively-blocking item remains. The production domain is
+  confirmed current, `facilitator/` is committed and merged, and a
+  Vercel build break that surfaced along the way (see Completed) is
+  fixed and verified. Top candidates from Next Up: wire
+  `creditDeposit()` into an actual call site, port the landing/lobby
+  mockup into real `src/app/(marketing)` components, and get a domain
+  in front of the VPS so the facilitator (and eventually chat and the
+  settlement worker) can actually deploy there.
 
 ## Completed
 
@@ -218,6 +221,108 @@
   was added at some earlier point not documented here. Retires Next
   Up's "add to Vercel" item as already done; worth noting as a gap in
   session note discipline rather than treating it as tonight's work.
+- **Production domain reconfirmed current.** `vercel inspect
+  hoodstack-tawny.vercel.app --logs` showed `Cloning ... Branch: main,
+  Commit: 3550355`, matching local `main`'s HEAD exactly at the time
+  -- genuinely serving the current commit, not the stale pre-merge
+  build a prior session's screenshot suggested. Closes out that Next
+  Up item for real, not just by inference.
+- **Landing/lobby mockup built** (`hoodstack-landing-mockup.html`,
+  standalone artifact, not yet ported into `src/app/(marketing)`).
+  Researched saaspo.com/templates and its industry/style-filtered
+  pages (dark-mode, crypto, finance, gaming categories) for reference
+  -- couldn't get real visual confirmation of specific templates
+  through available tools (`web_fetch` can't render images, image
+  search returned unrelated results), so recommended screenshots
+  instead of guessing from template names/descriptions alone. Person
+  then supplied a Bet26 Dribbble reference (neon purple/glow crypto
+  casino UI) -- flagged directly against `ui-context.md`'s explicit
+  "avoid the neon degen aesthetic" spec rather than silently building
+  it. Resolved with a middle-ground direction: restrained near-black
+  base per `ui-context.md`, more color allowed specifically in
+  per-game cards. Built with Inter/IBM Plex Mono standing in for
+  Geist (not on Google Fonts), a live-animated canvas Crash-multiplier
+  curve as the signature hero element -- resolves a prior session's
+  "energetic hero" decision through motion instead of neon color --
+  and scoped strictly to the four in-scope games (Coinflip, Crash,
+  Mines, Roulette), dropping Bet26's Wheel/Dice/Plinko. Reduced-motion
+  respected throughout.
+- **Real game art wired into the mockup.** Person supplied four
+  images; swapped in as full-bleed `object-fit: cover` art (each
+  source image a different, non-4:3 aspect ratio -- handled via crop,
+  not distortion) with each game's muted accent color kept as a thin
+  bar beneath, preserving the per-game color identity even with
+  photographic/illustrated art. Two problems flagged explicitly before
+  wiring rather than silently absorbed: the Crash image is
+  neon/glow-heavy, the same aesthetic family `ui-context.md` says to
+  avoid; the Mines image has a decorative border baked into the source
+  file that will double up against the card's own border-radius.
+  Person's call: keep all four as-is, accepted as a known trade-off,
+  not an oversight.
+- **Chat feature fully architected, not yet built.** Researched
+  self-hosted Socket.io (a `/chat` namespace on the same server
+  already planned for game-round state, per `architecture.md`'s own
+  listing) against managed alternatives (Stream, PubNub, Ably) --
+  rejected the managed options on cost-at-scale, duplicated real-time
+  infrastructure, and a second identity system to bridge against the
+  Privy-DID model every other service already uses. Room scoping is
+  per-game-page, not a global lobby -- already implied by
+  `ui-context.md`'s existing Layout Patterns section, not a new
+  decision. Persistence: a capped, TTL'd Redis buffer, not Postgres --
+  matches `architecture.md`'s existing line that Redis isn't the
+  source of truth for money, extended to chat history. Multi-instance
+  Redis-adapter scaling deliberately deferred as unnecessary at
+  current scale. Moderation: `leo-profanity` or `@2toad/profanity`
+  (free, MIT) for profanity, a regex layer blocking emails/phone
+  numbers/URLs specifically to deter off-platform payment
+  solicitation -- a real risk pattern in gambling-adjacent chat, not a
+  generic concern -- rate limiting reusing the Redis layer already
+  planned, and DID-keyed mute/ban. **Two decisions locked:** usernames
+  default to the wallet address's first 6 characters, user-editable
+  between 4 and 8 characters (open sub-question for whenever this is
+  built: which linked address's prefix wins when a DID has both an
+  embedded and an external wallet); retention is auto-delete with no
+  persistent history, and filtered/banned words are stripped rather
+  than logged anywhere.
+- **`facilitator/` committed to git** (previously untracked, confirmed
+  via `git status` in a prior session). The directory's own
+  `.gitignore` already correctly excluded `node_modules/` and `.env`
+  (the gas wallet's private key) -- verified via a staged `git status`
+  before committing, not assumed. `.env.example` got caught as
+  false-positive collateral by the *root* repo's broader `.env*`
+  gitignore pattern despite holding no real secrets; confirmed the
+  actual matching rule via `git check-ignore -v` before force-adding
+  it, rather than guessing. Branched properly
+  (`feat/commit-facilitator`) rather than repeating the earlier
+  direct-to-`main` hotfix pattern, since this wasn't an active
+  incident.
+- **Vercel build break found and fixed during the facilitator PR.**
+  The preview build failed on `Cannot find module 'express'` inside
+  `facilitator/index.ts`. Root cause: root `tsconfig.json`'s `include`
+  had no `src/` scoping (a bare `"**/*.ts"`), so Next's type-checker
+  swept in `facilitator/`'s code too -- and since `facilitator/
+  node_modules` is gitignored and Vercel only ever runs `npm install`
+  at the repo root, `express`'s types genuinely don't exist in that
+  environment. Worked locally only because `facilitator/node_modules`
+  already existed on-disk from local setup -- a real environment
+  difference Vercel's clean install exposed, not a skipped check.
+  Fixed by adding `"facilitator"` to `tsconfig.json`'s `exclude` array
+  via the same anchor-verified script pattern used elsewhere. Fix
+  verified clean via a second preview build (commit `6f2e9db`):
+  compiled successfully, no type or lint error on `facilitator/`,
+  `Deployment completed`.
+- **PR #6 merged** (`8feb166`, a real merge commit, not squashed).
+  A `vercel ls` moment right after looked identical to the earlier
+  PR #5 stale-deployment scare -- a "Production, Building" entry
+  appearing seconds after a branch push, seemingly unrelated to
+  anything just pushed to `main`. Resolved by checking the actual
+  commit in that deployment's build log rather than assuming either
+  way: it was genuinely building `8feb166` off `main`, because Vercel
+  kicks off a fresh Production deployment the instant a PR merges --
+  the timing just happened to land in the same `vercel ls` window as
+  watching the branch's own preview build. Confirmed against `git log
+  -1 origin/main` matching exactly. Not a bug, a lesson (see Session
+  Notes). Local `main` fast-forwarded, merged branch deleted.
 
 ## In Progress
 
@@ -225,44 +330,45 @@
 
 ## Next Up
 
-1. Confirm `hoodstack-tawny.vercel.app` (the actual production domain)
-   reflects PR #5's squash-merge commit on `main` -- a deployment
-   screenshot from a prior session showed `Source: feat/ledger-deposit-credit`
-   (pre-merge commit `4a2b3ec`) labeled `Environment: Production` on a
-   branch-preview-style domain, not the main production alias. Almost
-   certainly a stale/pre-merge deployment shown out of order, but
-   worth a direct look before trusting the production domain is
-   current, given this PR touches balance-mutating code.
-2. `facilitator/` still isn't committed to git -- confirmed via
-   `git status`. No longer just a naming question carried from a
-   prior session; it's a confirmed gap.
-3. Wire `creditDeposit()` into an actual call site -- no
-   `services/settlement` worker or route calls it yet. Now that
-   Postgres is reachable from production, this is the real remaining
-   gap in the deposit pipeline, not database reachability.
-4. Real house treasury custody decision. `HOUSE_TREASURY_ADDRESS` is
+1. Wire `creditDeposit()` into an actual call site -- no
+   `services/settlement` worker or route calls it yet. This is the
+   real remaining gap in the deposit pipeline now that every
+   infrastructure piece beneath it (Postgres, the production domain,
+   the facilitator) is confirmed working.
+2. Real house treasury custody decision. `HOUSE_TREASURY_ADDRESS` is
    currently a disposable test address set only in local
    `.env.local` -- it is NOT a custody answer and must not reach a
    real deployment as-is.
-5. Verify MockUSDT's real EIP-712 name/version on BSC Testnet
+3. Verify MockUSDT's real EIP-712 name/version on BSC Testnet
    on-chain (same method used for USDG previously) before testing the
    BSC deposit path.
-6. Decide: keep or strip the temporary `[http]` request logger in
-   `facilitator/index.ts` -- asked, still not answered.
-7. Fix the embedded-wallet chain-switch bug: Privy's
+4. Decide: keep or strip the temporary `[http]` request logger in
+   `facilitator/index.ts` -- now merged to `main` as-is; still an open
+   decision, not blocking anything.
+5. Fix the embedded-wallet chain-switch bug: Privy's
    `defaultChain: robinhoodChainTestnet` did not actually put a fresh
    embedded wallet on Robinhood Chain Testnet -- it showed `Network: 1`
    until manually switched via the wallet debug panel. A real player
    would silently hit this.
-8. Fix the React "missing key prop" console warning (likely the
+6. Fix the React "missing key prop" console warning (likely the
    wallet debug panel mapping `supportedChains` without a `key` --
    not confirmed).
-9. Reconcile `services/settlement` vs `facilitator/` naming across
+7. Reconcile `services/settlement` vs `facilitator/` naming across
    the docs -- still open.
-10. Port the reference repo's Coinflip UI onto the wallet layer.
-11. Deploy the facilitator (and later Socket.io + settlement worker)
-    to the VPS. Needs a domain or `sslip.io` wildcard DNS first.
-12. Add `PRIVY_APP_SECRET` to Vercel once server-side Privy lookups
+8. Port the reference repo's Coinflip UI onto the wallet layer.
+9. Port the landing/lobby mockup (`hoodstack-landing-mockup.html`)
+   into real `src/app/(marketing)` components against HeroUI --
+   still gated behind `find src/app -maxdepth 2 -type d` to confirm
+   whether `(marketing)` already exists and what the root layout
+   looks like, flagged two sessions ago and still never run.
+10. Deploy the facilitator (now committed and pullable from git, not
+    just local) -- and later Socket.io (game state and the newly
+    architected chat feature) and the settlement worker -- to the VPS.
+    Needs a domain or `sslip.io` wildcard DNS first. Chat itself is
+    fully scoped with two decisions locked (wallet-prefix usernames,
+    auto-delete retention, see Completed) but has no code yet --
+    blocked on this same step.
+11. Add `PRIVY_APP_SECRET` to Vercel once server-side Privy lookups
     (like the wallet-address-to-DID lookup) are needed in
     production -- currently local-only in `.env.local`, correctly
     excluded from git.
@@ -300,6 +406,16 @@
   it need the Permit2 path? (`x402-payment-architecture.md` already
   assumes Permit2 for BSC USDT generally -- worth confirming against
   the actual `MockUSDT` Foundry contract before verifying its domain.)
+- Is chat moderation a compliance requirement in the target
+  jurisdictions, not just a UX nicety -- real-money chat carries
+  harassment, public outcome disputes, and off-platform payment
+  solicitation risk. Same jurisdiction dependency as the licensing
+  question above; surfaced during this session's chat architecture
+  research, not yet answered either way.
+- Which linked address's prefix becomes a player's default chat
+  username when a Privy DID has both an embedded and an external
+  wallet? Small in scope but unresolved -- flagged when the
+  wallet-prefix username decision was locked in.
 
 ## Architecture Decisions
 
@@ -629,3 +745,38 @@ degrades. Reject any provider that cannot satisfy this.
   semantics in a future major version (`pg` v9) to match libpq exactly.
   Current behavior is the *stronger* `verify-full`-equivalent, so no
   action needed now -- worth revisiting if `pg` is ever bumped to v9.
+
+## Session Notes (cont. 6)
+
+- **saaspo.com/templates turned out to be 46 curated paid templates**,
+  not general design inspiration -- the broader site (3097 pages,
+  filterable by industry/style) is a separate, larger set of real
+  company sites. Neither `web_fetch` nor image search could produce
+  actual visual confirmation of any specific template's colors or
+  layout; template names and meta-descriptions are not a substitute
+  for seeing the real render. Worth remembering for future design
+  research on this project: ask for screenshots early rather than
+  reasoning from text descriptions of visual work.
+- **`tsconfig.json`'s `include` had no `src/` scoping** (`"**/*.ts"`
+  matches the whole repo) going into tonight -- this is what let
+  `facilitator/`'s code get swept into Next's type-check once the
+  directory was committed. Worth a general watch-out: anything new
+  added to repo root that isn't meant to be part of the Next.js app
+  needs an explicit `tsconfig.json` exclude entry, not an assumption
+  that `src/` scoping already handles it.
+- **The root `.gitignore`'s `.env*` pattern is broad enough to catch
+  `.env.example` files as collateral**, even though those hold no real
+  secrets and are meant to be committed. `git check-ignore -v <path>`
+  is the fast way to confirm which rule is actually matching before
+  deciding whether `git add -f` is safe.
+- **A "Production, Building" entry in `vercel ls` moments after a
+  branch push doesn't necessarily mean the alias is confused or a
+  stale deployment is showing** -- Vercel kicks off a fresh Production
+  deployment the instant a PR merges to `main`, and if that merge
+  happens close in time to unrelated branch activity, `vercel ls` can
+  show both at once in a way that looks alarming at a glance. The fix
+  is always the same: check the actual commit in the build log
+  (`vercel inspect <url> --logs | head -8`) before concluding anything
+  is wrong. This is the same category of confusion as the original
+  PR #5 scare from a prior session -- never fully confirmed then, but
+  consistent with this same explanation in hindsight.
