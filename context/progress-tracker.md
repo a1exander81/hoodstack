@@ -9,9 +9,10 @@
   against a real local Postgres database, with idempotency proven via
   a retried credit attempt. Production's database, the production
   domain's currency, and `facilitator/` being untracked are all
-  resolved (see Completed). `creditDeposit()` still has no call site
-  wiring it into the deposit flow -- that remains the actual gap in
-  the deposit pipeline. A landing/lobby mockup exists (not yet ported
+  resolved (see Completed). `creditDeposit()` is now wired into a real call site
+  (`services/settlement`, PR #7) and verified against a real settled
+  deposit -- that gap from prior sessions is closed. A landing/lobby
+  mockup exists (not yet ported
   into real components) and the chat feature is fully architected with
   two decisions locked, but neither is built -- both are new threads
   from this session, not carried-over blockers.
@@ -21,11 +22,12 @@
 - No single actively-blocking item remains. The production domain is
   confirmed current, `facilitator/` is committed and merged, and a
   Vercel build break that surfaced along the way (see Completed) is
-  fixed and verified. Top candidates from Next Up: wire
-  `creditDeposit()` into an actual call site, port the landing/lobby
-  mockup into real `src/app/(marketing)` components, and get a domain
-  in front of the VPS so the facilitator (and eventually chat and the
-  settlement worker) can actually deploy there.
+  fixed and verified. `creditDeposit()` is wired into a real call site and verified live
+  in production (`hoodstack-tawny.vercel.app`, commit `1922147`). Top
+  candidates from Next Up: port the landing/lobby mockup into real
+  `src/app/(marketing)` components, get a domain in front of the VPS
+  so the facilitator (and eventually chat) can actually deploy there,
+  and settle the real house treasury custody question.
 
 ## Completed
 
@@ -324,51 +326,137 @@
   -1 origin/main` matching exactly. Not a bug, a lesson (see Session
   Notes). Local `main` fast-forwarded, merged branch deleted.
 
+- **`services/settlement` built, merged, and verified against a real
+  settled deposit** (PR #7, `feat/settlement-ledger-wiring`, squash-
+  merged to `main` as `1922147`). `creditDeposit()` finally has a
+  real call site -- the gap flagged at the top of this file since
+  PR #5.
+  - **Where the credit actually happens, found by reading the
+    compiled `@x402/core@2.21.0` server bundle** (not just the
+    `.d.ts`): settlement happens *inside* `x402HTTPResourceServer`,
+    invisible to the route handler. The only integration point with
+    the confirmed on-chain tx hash is
+    `resourceServer.onAfterSettle(...)`, registered in `route.ts`
+    alongside the existing `.register(...)` calls. Also confirmed in
+    the compiled source: every `afterSettle` hook runs inside the
+    SDK's own try/catch, which only *warns* on failure and does not
+    fail the settlement or change the client's response -- a thrown
+    error in the hook is invisible to the player. This is why
+    `reconcileSettledDeposit`
+    (`services/settlement/reconcile-deposit.ts`) logs loudly
+    (`console.error`) on failure rather than trusting the SDK to
+    surface it.
+  - **Identity gates BEFORE settlement, not after.** The route
+    handler verifies a Privy access token
+    (`Authorization: Bearer <token>`, via `@privy-io/node`'s
+    `verifyAccessToken` against a static PEM key) before returning
+    its response; a failed check returns 401, which
+    `x402-next-adapter.ts` reads as >=400 and cancels settlement
+    before any on-chain transaction is submitted. Deliberately chosen
+    over deriving the DID from the settled `payer` address
+    afterward, which would reopen the "which linked wallet's DID
+    wins" ambiguity and let an unauthenticated caller's funds move
+    with no way to credit them.
+  - **`@privy-io/node@0.28.0` added** via `--legacy-peer-deps` --
+    it optionally peers on `@solana/kit@^5.1.0`, conflicting with
+    `@privy-io/react-auth`'s own optional `@solana/kit@2.3.0` peer.
+    Same category as the existing `@x402/*` webpack `IgnorePlugin`
+    workaround: an unused Solana path in Privy's bundled SDK,
+    irrelevant to this EVM-only project.
+  - **`NEXT_PUBLIC_PRIVY_APP_ID` reused server-side** instead of
+    adding a duplicate `PRIVY_APP_ID` -- app IDs aren't secret,
+    confirmed against Privy's docs before assuming.
+    `PRIVY_VERIFICATION_KEY` added from Dashboard -> Settings ->
+    Basics tab (not "Settings -> API," an early wrong guess
+    corrected mid-session) to `.env.local` and to Vercel Production +
+    Preview.
+  - **`@services/*` path alias added to `tsconfig.json`**
+    (`-> ./services/*`) specifically to avoid a five-level
+    `../../../../../services/settlement` relative import out of
+    `src/app/api/x402/deposit/` -- the same class of path mistake
+    that caused the `app/`/`src/app/` incident two sessions ago.
+  - **Real build-time bug, not review**: `creditDepositInputSchema`'s
+    `z.coerce.bigint()` keeps its `z.input` type pinned to `bigint`
+    despite accepting a string at runtime -- passing the settlement's
+    `result.amount` string directly failed `npm run build`'s type
+    check. Fixed with an explicit `BigInt(...)` instead of relying on
+    coercion.
+  - **`/dev/x402-test` now sends the access token.** Confirmed
+    against the real installed `@x402/fetch@2.21.0` source that
+    `wrapFetchWithPayment` clones the original `Request` -- headers
+    included -- before adding payment-signature headers on retry, so
+    `Authorization` survives the paid leg.
+  - **Verified end to end against a fresh real deposit**, not a
+    reused one: tx
+    `0x438533caaa67710c2fe41f60b0018a392c86cde4c5d7745937e8d94483c2b681`
+    on Robinhood Chain Testnet (1.01 USDG), confirmed via a disposable
+    read-only script against the live `DATABASE_URL` -- a real
+    `LedgerEntry` with the matching `txHash`, DID
+    (`did:privy:cmsn52rxu02ye0cl11k3aqoy0`), and amount, not inferred
+    from the 200 response alone (the hook's failure mode is
+    specifically silent, see above). A stale script from the PR #5
+    session, still sitting under a similar filename, briefly returned
+    an `already-credited` result for the *wrong*, week-old tx --
+    caught by checking the actual `txHash` in the row rather than
+    trusting the status string. Both scratch scripts deleted before
+    merge.
+  - **Production confirmed serving the merge**: `vercel inspect
+    hoodstack-tawny.vercel.app --logs` shows `Commit: 1922147`,
+    matching `main`'s real merge commit -- not just a "Ready" label.
+
 ## In Progress
 
 - None
 
 ## Next Up
 
-1. Wire `creditDeposit()` into an actual call site -- no
-   `services/settlement` worker or route calls it yet. This is the
-   real remaining gap in the deposit pipeline now that every
-   infrastructure piece beneath it (Postgres, the production domain,
-   the facilitator) is confirmed working.
-2. Real house treasury custody decision. `HOUSE_TREASURY_ADDRESS` is
+1. Real house treasury custody decision. `HOUSE_TREASURY_ADDRESS` is
    currently a disposable test address set only in local
    `.env.local` -- it is NOT a custody answer and must not reach a
    real deployment as-is.
-3. Verify MockUSDT's real EIP-712 name/version on BSC Testnet
+2. Verify MockUSDT's real EIP-712 name/version on BSC Testnet
    on-chain (same method used for USDG previously) before testing the
    BSC deposit path.
-4. Decide: keep or strip the temporary `[http]` request logger in
+3. Decide: keep or strip the temporary `[http]` request logger in
    `facilitator/index.ts` -- now merged to `main` as-is; still an open
    decision, not blocking anything.
-5. Fix the embedded-wallet chain-switch bug: Privy's
+4. Fix the embedded-wallet chain-switch bug: Privy's
    `defaultChain: robinhoodChainTestnet` did not actually put a fresh
    embedded wallet on Robinhood Chain Testnet -- it showed `Network: 1`
    until manually switched via the wallet debug panel. A real player
    would silently hit this.
-6. Fix the React "missing key prop" console warning (likely the
+5. Fix the React "missing key prop" console warning (likely the
    wallet debug panel mapping `supportedChains` without a `key` --
    not confirmed).
-7. Reconcile `services/settlement` vs `facilitator/` naming across
-   the docs -- still open.
-8. Port the reference repo's Coinflip UI onto the wallet layer.
-9. Port the landing/lobby mockup (`hoodstack-landing-mockup.html`)
+6. Correct `architecture.md` and `x402-payment-architecture.md`:
+   both describe `services/settlement` as a "background worker" that
+   submits signed authorizations to chain. What actually got built
+   (PR #7) is NOT a worker -- it's a synchronous
+   `resourceServer.onAfterSettle` hook running inside the same
+   request as the deposit route, because that's the only point in
+   the real `@x402/core` SDK with the confirmed tx hash (see
+   Completed). The docs should describe what's real, not what was
+   planned before that was known. This also folds in the older
+   "reconcile services/settlement vs facilitator/ naming" item -- the
+   two are now clearly distinct in practice (facilitator/ = on-chain
+   verify/settle mechanics, services/settlement = reconciling a
+   settled payment into the ledger), the docs just haven't caught up.
+7. Port the reference repo's Coinflip UI onto the wallet layer.
+8. Port the landing/lobby mockup (`hoodstack-landing-mockup.html`)
    into real `src/app/(marketing)` components against HeroUI --
    still gated behind `find src/app -maxdepth 2 -type d` to confirm
    whether `(marketing)` already exists and what the root layout
-   looks like, flagged two sessions ago and still never run.
-10. Deploy the facilitator (now committed and pullable from git, not
-    just local) -- and later Socket.io (game state and the newly
-    architected chat feature) and the settlement worker -- to the VPS.
-    Needs a domain or `sslip.io` wildcard DNS first. Chat itself is
-    fully scoped with two decisions locked (wallet-prefix usernames,
-    auto-delete retention, see Completed) but has no code yet --
-    blocked on this same step.
-11. Add `PRIVY_APP_SECRET` to Vercel once server-side Privy lookups
+   looks like, flagged three sessions ago and still never run.
+9. Deploy the facilitator (committed and pullable from git) -- and
+   later Socket.io (game state and the newly architected chat
+   feature) -- to the VPS. Needs a domain or `sslip.io` wildcard DNS
+   first. `services/settlement` does NOT belong on this list -- it
+   runs inline inside the Vercel-deployed Next.js app, not as a
+   separate VPS worker (see item 6 above). Chat itself is fully
+   scoped with two decisions locked (wallet-prefix usernames,
+   auto-delete retention, see Completed) but has no code yet --
+   blocked on this same step.
+10. Add `PRIVY_APP_SECRET` to Vercel once server-side Privy lookups
     (like the wallet-address-to-DID lookup) are needed in
     production -- currently local-only in `.env.local`, correctly
     excluded from git.
@@ -780,3 +868,40 @@ degrades. Reject any provider that cannot satisfy this.
   is wrong. This is the same category of confusion as the original
   PR #5 scare from a prior session -- never fully confirmed then, but
   consistent with this same explanation in hindsight.
+
+## Session Notes (cont. 7)
+
+- **Unexplained large diff arrived via `git pull` on `main`, not from
+  this session's branch**: ~11,000 lines across `.agents/skills/prisma-*`,
+  `.claude/skills/prisma-*`, `.windsurf/skills/prisma-*`,
+  `skills-lock.json`, and a `package.json`/`package-lock.json` bump --
+  none of it touched by `feat/settlement-ledger-wiring`. Likely a
+  skill-catalog auto-install (Prisma reference skills) landing
+  directly on `main`, not authored by this session or its branch.
+  Didn't break the build and is orthogonal to tonight's work, but
+  worth confirming the source before it's a surprise later -- if it
+  wasn't an intentional install, it bypassed the branch -> PR ->
+  CodeRabbit flow used for everything else.
+- **`architecture.md` / `x402-payment-architecture.md` need a real
+  correction, not just an update** (see Next Up item 6):
+  `services/settlement` was documented as a background worker; what
+  got built and merged is a synchronous in-request hook. Logged
+  rather than fixed tonight, to avoid scope creep at the tail of an
+  already long session.
+- **Edit-first placeholder commands need to look different from real
+  ones**: a command meant to be edited before running (e.g. `echo
+  'KEY="paste-the-key-here"' >> .env.local`) formatted identically to
+  every other copy-pasteable command in the same reply got run
+  verbatim, landing the literal placeholder in `.env.local` and
+  costing a debugging round-trip. Edit-first instructions need to be
+  visually distinct from runnable commands, not just worded as an
+  aside.
+- **This close-out itself needed two retries**: the first two attempts
+  to update this file were built from a remembered/assumed version of
+  its content (partly from a cross-session memory digest, which uses
+  a different section structure than this file actually has -- e.g.
+  no "## Key learnings & principles" heading exists here). Both
+  aborted safely on a mismatched anchor rather than writing anything
+  wrong, but the fix was to have the real file's content pasted fresh
+  and reconstruct it (with overlap verified programmatically, not
+  eyeballed) before touching it again.
