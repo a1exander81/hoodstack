@@ -52,14 +52,24 @@ is confirmed.
    authorization (USDT/BSC).
 4. Frontend retries the request with the signed payload in the
    `X-PAYMENT` header.
-5. `services/settlement` submits the signature to
-   `x402ExactPermit2Proxy.settleWithPermit()` (or the EIP-3009 path)
-   via the facilitator. The proxy enforces that funds only move to
-   the `payTo` address in the original request — neither the
-   facilitator nor the backend can redirect or resize the payment.
-6. On confirmed settlement, `services/settlement` credits
-   `services/ledger` with the confirmed amount, keyed by transaction
-   hash for idempotency.
+5. `@x402/core`'s `x402HTTPResourceServer`, running inside the
+   deposit route handler, calls the facilitator's `/verify` and
+   `/settle` endpoints, which submit the signature to
+   `x402ExactPermit2Proxy.settleWithPermit()` (or the EIP-3009 path).
+   The proxy enforces that funds only move to the `payTo` address in
+   the original request — neither the facilitator nor the backend can
+   redirect or resize the payment. This submission happens inside the
+   SDK, invisible to the route handler's own code.
+6. Once settlement resolves, the SDK synchronously calls the route's
+   registered `resourceServer.onAfterSettle(...)` hook, in the same
+   request — not a separate background worker. The hook
+   (`services/settlement/reconcile-deposit.ts`) reads the confirmed
+   tx hash and amount and credits `services/ledger`, keyed by
+   transaction hash for idempotency. The SDK runs every `afterSettle`
+   hook inside its own try/catch and only warns on failure — a thrown
+   error here doesn't fail the settlement or change the client's
+   response, so the hook logs loudly (`console.error`) rather than
+   relying on the SDK to surface it.
 
 ## Withdrawal Flow (`upto` scheme)
 
@@ -78,6 +88,13 @@ is confirmed.
    relationship) — Hoodstack has no on-ramp or off-ramp partner
    relationship of its own.
 
+**Note:** this withdrawal flow is design-only — not yet implemented.
+When built, `services/settlement`'s reconciliation step will very
+likely follow the same synchronous `onAfterSettle`-hook pattern the
+deposit flow uses (see Deposit Flow above), not a standalone worker
+process. Revisit this section once the withdrawal route is actually
+built.
+
 ## Facilitator
 
 x402's CDP-hosted facilitator (Coinbase) is documented to cover Base,
@@ -93,7 +110,9 @@ matures. This is listed as an open question in `progress-tracker.md`.
 ## Ledger Interaction
 
 `services/settlement` is the only caller of `services/ledger` for
-deposit/withdrawal events. It:
+deposit/withdrawal events — for deposits, invoked synchronously via
+the x402 SDK's `onAfterSettle` hook rather than as a standalone
+process (see Deposit Flow above). It:
 
 - Never credits a balance from a client-reported "payment succeeded"
   message — only from a confirmed on-chain event it independently
