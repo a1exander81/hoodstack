@@ -7,20 +7,22 @@
   merged) are all built and verified end to end: a real signed deposit
   settled on Robinhood Chain Testnet and credited into the ledger
   against a real local Postgres database, with idempotency proven via
-  a retried credit attempt. Production has no reachable database yet
-  -- that's the next blocker, not a new build unit.
+  a retried credit attempt. Production's database was the last blocker
+  -- resolved this session (Neon, see Completed). `creditDeposit()`
+  still has no call site wiring it into the deposit flow; that's the
+  actual gap now, not database reachability.
 
 ## Current Goal
 
-- Get a real, reachable Postgres database in front of Vercel's
-  serverless functions -- `DATABASE_URL` doesn't exist in Vercel at
-  all, and a Supabase project was created at the dashboard level this
-  session but never wired into the repo (no connection string
-  anywhere). Local Homebrew Postgres proved the ledger logic correct
-  but can't be reached from production. Once resolved, wire
-  `creditDeposit()` into an actual call site (no `services/settlement`
-  worker or route calls it yet -- this session proved the ledger
-  itself, not the pipeline into it).
+- Hosted Postgres resolved this session (Neon, see Completed) --
+  Vercel Production and Preview both have working `DATABASE_URL`/
+  `DIRECT_URL`, verified with a real round-trip query against the
+  exact pooled connection string Vercel holds, not just a CLI success
+  message. No single actively-blocking item remains; top candidates
+  from Next Up are confirming the production domain reflects PR #5,
+  committing `facilitator/`, and wiring `creditDeposit()` into an
+  actual call site now that there's a real production database behind
+  it.
 
 ## Completed
 
@@ -182,6 +184,40 @@
   wallet. Doesn't affect the ledger (same DID either way), but matters
   for the backup-login-method open question below, which only applies
   to embedded wallets.
+- **Hosted Postgres wired to Neon for production** -- Supabase was
+  dropped as the candidate: the account already had 2 projects
+  (Supabase's free-tier cap), both in use. Neon confirmed to allow up
+  to 100 projects on its free tier (verified against Neon's own docs,
+  not aggregator pricing pages) before switching. Project
+  `dawn-dawn-53245798` created; connected via the Neon CLI
+  (`neonctl`) rather than the dashboard -- `neon auth` (browser OAuth)
+  then `neon connection-string --project-id ... --pooled --prisma` /
+  without `--pooled` for the direct string, `--prisma` appending
+  `connect_timeout=30` per Prisma's own recommendation. No code
+  changes needed versus the Supabase plan: Neon speaks standard
+  Postgres wire protocol, so the existing `@prisma/adapter-pg` setup
+  applies unchanged -- `@prisma/adapter-neon`'s serverless driver is
+  only needed on edge runtime, which this app doesn't use.
+  `prisma migrate deploy` applied `20260811105405_add_ledger_entry`
+  to Neon cleanly. `DATABASE_URL` (pooled, `-pooler` hostname) and
+  `DIRECT_URL` (direct hostname) added to Vercel Production + Preview
+  via `vercel env add` (sensitive, interactive, one at a time -- per
+  the standing note below, piped stdin still isn't reliable for the
+  preview branch prompt). Redeploy triggered via an empty commit.
+  **Verified with a disposable script** (`scripts/verify-neon.ts`,
+  deleted after use), not just trusted: ran a real `$queryRaw` against
+  the exact pooled connection string now in Vercel, confirming both
+  connectivity (`[ { connected: 1 } ]`) and that
+  `20260811105405_add_ledger_entry` shows a real `finished_at`
+  timestamp on Neon itself -- proof the production credential set can
+  actually reach the migrated schema, not just that the CLI claimed
+  success.
+- **`USDT_BSC_TESTNET_ADDRESS` discovered already present in Vercel**
+  (Production + Preview) via `vercel env ls` while confirming the new
+  Neon vars landed -- timestamped ~1 day prior to this session, so it
+  was added at some earlier point not documented here. Retires Next
+  Up's "add to Vercel" item as already done; worth noting as a gap in
+  session note discipline rather than treating it as tonight's work.
 
 ## In Progress
 
@@ -189,20 +225,21 @@
 
 ## Next Up
 
-1. Hosted Postgres for production (see Current Goal) -- Supabase vs
-   Neon vs Vercel Postgres still undecided; Supabase project exists
-   in the dashboard but is fully unwired.
-2. Confirm `hoodstack-tawny.vercel.app` (the actual production domain)
+1. Confirm `hoodstack-tawny.vercel.app` (the actual production domain)
    reflects PR #5's squash-merge commit on `main` -- a deployment
-   screenshot from tonight showed `Source: feat/ledger-deposit-credit`
+   screenshot from a prior session showed `Source: feat/ledger-deposit-credit`
    (pre-merge commit `4a2b3ec`) labeled `Environment: Production` on a
    branch-preview-style domain, not the main production alias. Almost
    certainly a stale/pre-merge deployment shown out of order, but
    worth a direct look before trusting the production domain is
    current, given this PR touches balance-mutating code.
-3. `facilitator/` still isn't committed to git -- confirmed via
-   `git status` this session (shows as untracked). No longer just a
-   naming question carried from a prior session; it's a confirmed gap.
+2. `facilitator/` still isn't committed to git -- confirmed via
+   `git status`. No longer just a naming question carried from a
+   prior session; it's a confirmed gap.
+3. Wire `creditDeposit()` into an actual call site -- no
+   `services/settlement` worker or route calls it yet. Now that
+   Postgres is reachable from production, this is the real remaining
+   gap in the deposit pipeline, not database reachability.
 4. Real house treasury custody decision. `HOUSE_TREASURY_ADDRESS` is
    currently a disposable test address set only in local
    `.env.local` -- it is NOT a custody answer and must not reach a
@@ -210,25 +247,23 @@
 5. Verify MockUSDT's real EIP-712 name/version on BSC Testnet
    on-chain (same method used for USDG previously) before testing the
    BSC deposit path.
-6. Add `USDT_BSC_TESTNET_ADDRESS` to Vercel Production + Preview --
-   currently local-only.
-7. Decide: keep or strip the temporary `[http]` request logger in
+6. Decide: keep or strip the temporary `[http]` request logger in
    `facilitator/index.ts` -- asked, still not answered.
-8. Fix the embedded-wallet chain-switch bug: Privy's
+7. Fix the embedded-wallet chain-switch bug: Privy's
    `defaultChain: robinhoodChainTestnet` did not actually put a fresh
    embedded wallet on Robinhood Chain Testnet -- it showed `Network: 1`
    until manually switched via the wallet debug panel. A real player
    would silently hit this.
-9. Fix the React "missing key prop" console warning (likely the
+8. Fix the React "missing key prop" console warning (likely the
    wallet debug panel mapping `supportedChains` without a `key` --
    not confirmed).
-10. Reconcile `services/settlement` vs `facilitator/` naming across
-    the docs -- still open.
-11. Port the reference repo's Coinflip UI onto the wallet layer.
-12. Deploy the facilitator (and later Socket.io + settlement worker)
+9. Reconcile `services/settlement` vs `facilitator/` naming across
+   the docs -- still open.
+10. Port the reference repo's Coinflip UI onto the wallet layer.
+11. Deploy the facilitator (and later Socket.io + settlement worker)
     to the VPS. Needs a domain or `sslip.io` wildcard DNS first.
-13. Add `PRIVY_APP_SECRET` to Vercel once server-side Privy lookups
-    (like tonight's wallet-address-to-DID lookup) are needed in
+12. Add `PRIVY_APP_SECRET` to Vercel once server-side Privy lookups
+    (like the wallet-address-to-DID lookup) are needed in
     production -- currently local-only in `.env.local`, correctly
     excluded from git.
 
@@ -562,3 +597,35 @@ degrades. Reject any provider that cannot satisfy this.
   branch-preview-style domain -- not `hoodstack-tawny.vercel.app`.
   Flagged in Next Up to confirm the real production domain reflects
   the post-merge `main` commit before trusting it.
+
+## Session Notes (cont. 5)
+
+- **Supabase abandoned for hosted Postgres**: the account had already
+  used both free-tier project slots. Neon picked as the replacement
+  after confirming (against Neon's own current docs, not third-party
+  pricing aggregators) its free tier allows up to 100 projects --
+  functionally no constraint for this project's needs.
+- **Neon CLI (`neonctl`) used end to end** instead of the dashboard:
+  `neon auth` for browser-based OAuth, `neon connection-string
+  --project-id dawn-dawn-53245798 [--pooled] --prisma` for both
+  connection strings. `--prisma` appends `connect_timeout=30`, which
+  Prisma's docs recommend to avoid client-side timeouts on Neon's
+  scale-to-zero cold starts.
+- **No adapter swap needed for Neon.** `@prisma/adapter-neon` (Neon's
+  serverless driver) is only required on edge runtimes; this app runs
+  standard Next.js serverless functions on Vercel, so the existing
+  `@prisma/adapter-pg` + `pg` setup from the Supabase/local-Postgres
+  work applies unchanged -- only the connection string values differ.
+- **Verified the actual production credential, not just the CLI's
+  claim.** `prisma migrate deploy` reporting success only proves the
+  migration ran against whatever URL was passed inline. Separately
+  ran a disposable script (`scripts/verify-neon.ts`, deleted after)
+  against the *exact* pooled `DATABASE_URL` now stored in Vercel,
+  confirming a live `$queryRaw` round-trip and reading back
+  `20260811105405_add_ledger_entry`'s real `finished_at` timestamp
+  from Neon's `_prisma_migrations` table.
+- **`pg` driver SSL deprecation warning noted, not a current issue**:
+  `pg-connection-string` warns that `sslmode=require` will change
+  semantics in a future major version (`pg` v9) to match libpq exactly.
+  Current behavior is the *stronger* `verify-full`-equivalent, so no
+  action needed now -- worth revisiting if `pg` is ever bumped to v9.
