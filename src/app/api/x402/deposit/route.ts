@@ -1,11 +1,13 @@
 // 402 challenge/response + verify/settle endpoint for moving a user's wallet
 // funds into their Hoodstack table balance. See x402-payment-architecture.md.
 //
-// This proves /verify -> /settle against the facilitator for a real signed
-// payment. It deliberately does NOT touch services/ledger -- crediting the
-// user's table balance is a separate, protected, reviewed increment per
-// ai-workflow-rules.md. Once settlement is confirmed here, the next
-// increment wires the confirmed tx hash into services/ledger.
+// The route handler itself only gates on identity -- it runs BEFORE the
+// real on-chain settlement (see x402-next-adapter.ts's handleSettlement),
+// so returning a 4xx here cancels settlement before any transaction is
+// submitted. The actual ledger credit happens in reconcileSettledDeposit,
+// registered below as resourceServer.onAfterSettle(...) -- that's the only
+// point where the SDK exposes the confirmed on-chain tx hash. See
+// services/settlement/reconcile-deposit.ts for why.
 //
 // Network is NOT taken from the client's request body. Per
 // project-overview.md ("chain choice is a backend/operator decision, not
@@ -26,6 +28,7 @@ import {
   getUsdgAddress,
   getUsdtBscAddress,
 } from "@/lib/x402-assets";
+import { reconcileSettledDeposit, resolveAuthenticatedDid } from "@services/settlement";
 
 const FACILITATOR_URL = process.env.FACILITATOR_URL;
 if (!FACILITATOR_URL) {
@@ -43,7 +46,8 @@ const facilitatorClient = new HTTPFacilitatorClient({ url: FACILITATOR_URL });
 
 const resourceServer = new x402ResourceServer(facilitatorClient)
   .register(ROBINHOOD_TESTNET_NETWORK, new ExactEvmScheme())
-  .register(BSC_TESTNET_NETWORK, new ExactEvmScheme());
+  .register(BSC_TESTNET_NETWORK, new ExactEvmScheme())
+  .onAfterSettle(reconcileSettledDeposit);
 
 // Both assets are 6 decimals: USDG verified on-chain against the deployed
 // testnet contract (`decimals()` call, not assumed), MockUSDT deployed with
@@ -103,15 +107,22 @@ const routeConfig: RouteConfig = {
 };
 
 export const POST = withX402(
-  async function handleVerifiedDeposit(_request: NextRequest) {
-    // Reached only after the facilitator has verified the signed payment.
-    // Settlement itself happens after this returns (see
-    // src/lib/x402-next-adapter.ts's handleSettlement) -- this response
-    // just needs to succeed (status < 400) so settlement proceeds.
-    //
-    // NEXT INCREMENT (deliberately not here): once settlement is confirmed,
-    // hand the confirmed tx hash to services/settlement for ledger
-    // reconciliation. Protected per ai-workflow-rules.md -- separate review.
+  async function handleVerifiedDeposit(request: NextRequest) {
+    // Runs BEFORE settlement -- see x402-next-adapter.ts's handleSettlement.
+    // A >=400 response here cancels settlement before any on-chain
+    // transaction is submitted, so an unauthenticated caller never has
+    // funds moved with no way to credit them.
+    try {
+      await resolveAuthenticatedDid(request.headers.get("authorization"));
+    } catch (error) {
+      console.warn("[deposit] rejecting unauthenticated settlement attempt:", error);
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // The actual ledger credit happens in reconcileSettledDeposit
+    // (resourceServer.onAfterSettle, registered above) -- that's the only
+    // point with the confirmed on-chain tx hash. This response just needs
+    // to succeed (status < 400) so settlement proceeds.
     return NextResponse.json({ status: "settling" });
   },
   routeConfig,
