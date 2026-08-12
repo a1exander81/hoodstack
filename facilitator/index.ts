@@ -1,5 +1,6 @@
 import { x402Facilitator } from "@x402/core/facilitator";
 import type {
+  FacilitatorExtension,
   PaymentPayload,
   PaymentRequirements,
   SettleResponse,
@@ -10,7 +11,14 @@ import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
 import { UptoEvmScheme } from "@x402/evm/upto/facilitator";
 import dotenv from "dotenv";
 import express from "express";
-import { createWalletClient, defineChain, http, publicActions } from "viem";
+import {
+  createWalletClient,
+  defineChain,
+  http,
+  parseTransaction,
+  publicActions,
+  recoverTransactionAddress,
+} from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { bscTestnet } from "viem/chains";
 import { z } from "zod";
@@ -96,6 +104,124 @@ const robinhoodSigner = buildSigner(robinhoodChainTestnet);
 const bscSigner = buildSigner(bscTestnet);
 
 // ---------------------------------------------------------------------------
+// ERC-20 Approval Gas Sponsorship extension (BSC / MockUSDT deposit path).
+//
+// MockUSDT has neither EIP-3009 nor EIP-2612 (contracts/mock-usdt/src/Counter.sol
+// — see progress-tracker.md), so its one-time Permit2 approval can't be
+// sponsored via an EIP-2612 permit signature. @x402/evm's client SDK instead
+// has the user *locally sign* (not broadcast) a raw approve(Permit2, maxUint256)
+// transaction and hands it to us inside the payment payload's
+// erc20ApprovalGasSponsoring extension. Broadcasting a pre-signed transaction
+// doesn't make the broadcaster pay its gas -- gas is deducted from whoever
+// signed it, baked into the signature. So before broadcasting, we top up the
+// payer's own address with just enough native gas token from our gas wallet
+// to cover that specific approval transaction. That top-up IS the
+// "sponsorship"; everything else here is relaying already-signed data.
+//
+// Deliberately NOT a flat top-up amount: we decode the actual signed
+// transaction (gas * maxFeePerGas) to know precisely what's owed, and only
+// send the shortfall against the payer's current balance.
+// ---------------------------------------------------------------------------
+
+// Hard cap on what a single top-up will ever send, independent of what the
+// decoded transaction claims to need. A malformed or malicious signed
+// transaction must not be able to drain the gas wallet in one call -- see
+// code-standards.md's "financial correctness beats convenience." Roughly
+// 40x the SDK's own 70,000-gas approval estimate at 1 gwei (see
+// ERC20_APPROVE_GAS_LIMIT / DEFAULT_MAX_FEE_PER_GAS in @x402/evm).
+const MAX_GAS_TOPUP_WEI = 3_000_000_000_000_000n; // 0.003 native token
+
+interface Erc20ApprovalSponsorSigner {
+  sendTransactions(
+    txs: readonly (`0x${string}` | { to: `0x${string}`; data: `0x${string}`; gas?: bigint })[],
+  ): Promise<readonly `0x${string}`[]>;
+  waitForTransactionReceipt(args: { hash: `0x${string}` }): Promise<{ status: string }>;
+}
+
+function buildErc20ApprovalSponsorSigner(
+  chain: typeof bscTestnet | typeof robinhoodChainTestnet,
+): Erc20ApprovalSponsorSigner {
+  const client = createWalletClient({ account, chain, transport: http() }).extend(publicActions);
+
+  return {
+    async sendTransactions(txs) {
+      const [signedApprovalTx, settleTxRequest] = txs;
+      if (typeof signedApprovalTx !== "string") {
+        throw new Error("Expected first sponsored transaction to be a pre-signed raw transaction");
+      }
+      if (typeof settleTxRequest === "string") {
+        throw new Error("Expected second sponsored transaction to be an unsigned settle request");
+      }
+
+      // Decode exactly what the pre-signed approval needs and who it's from --
+      // never trust an externally supplied amount for a real fund transfer.
+      const parsed = parseTransaction(signedApprovalTx);
+      if (parsed.gas == null || parsed.maxFeePerGas == null) {
+        throw new Error("Sponsored approval transaction is missing gas or maxFeePerGas");
+      }
+      const requiredWei = parsed.gas * parsed.maxFeePerGas;
+      if (requiredWei > MAX_GAS_TOPUP_WEI) {
+        throw new Error(
+          `Sponsored approval requires ${requiredWei} wei, exceeding the ${MAX_GAS_TOPUP_WEI} wei hard cap -- refusing to sponsor`,
+        );
+      }
+      // Same generic-signer type mismatch as elsewhere in this file: viem
+      // narrows serializedTransaction to a per-tx-type literal union it
+      // can't infer from the SDK's plain `0x${string}`.
+      const payer = await recoverTransactionAddress({
+        serializedTransaction: signedApprovalTx,
+      } as never);
+
+      const payerBalance = await client.getBalance({ address: payer });
+      if (payerBalance < requiredWei) {
+        const topUpHash = await client.sendTransaction({
+          to: payer,
+          value: requiredWei - payerBalance,
+        });
+        const topUpReceipt = await client.waitForTransactionReceipt({ hash: topUpHash });
+        if (topUpReceipt.status !== "success") {
+          throw new Error(`Gas top-up transaction to payer ${payer} failed on-chain`);
+        }
+      }
+
+      const approvalHash = await client.sendRawTransaction({
+        serializedTransaction: signedApprovalTx,
+      });
+      const approvalReceipt = await client.waitForTransactionReceipt({ hash: approvalHash });
+      if (approvalReceipt.status !== "success") {
+        throw new Error(`Sponsored approval transaction ${approvalHash} failed on-chain`);
+      }
+
+      const settleHash = await client.sendTransaction({
+        to: settleTxRequest.to,
+        data: settleTxRequest.data,
+        gas: settleTxRequest.gas,
+      });
+
+      return [approvalHash, settleHash];
+    },
+    waitForTransactionReceipt: client.waitForTransactionReceipt,
+  };
+}
+
+interface Erc20ApprovalGasSponsoringExtension extends FacilitatorExtension {
+  signerForNetwork(network: string): Erc20ApprovalSponsorSigner | undefined;
+}
+
+const robinhoodSponsorSigner = buildErc20ApprovalSponsorSigner(robinhoodChainTestnet);
+const bscSponsorSigner = buildErc20ApprovalSponsorSigner(bscTestnet);
+
+const erc20ApprovalGasSponsoringExtension: Erc20ApprovalGasSponsoringExtension = {
+  key: "erc20ApprovalGasSponsoring",
+  signerForNetwork(network) {
+    if (network === "eip155:97") return bscSponsorSigner;
+    if (network === "eip155:46630") return robinhoodSponsorSigner;
+    return undefined;
+  },
+};
+
+
+// ---------------------------------------------------------------------------
 // Facilitator: exact (deposits) + upto (withdrawals) on both testnets.
 // Smart-wallet deployment via ERC-6492 stays disabled (eip6492AllowedFactories: [])
 // — Privy smart wallets are OFF for this project, everything signs as a plain EOA.
@@ -109,6 +235,7 @@ const facilitator = new x402Facilitator()
   .onAfterSettle(async (ctx) => console.log("[settle:after]", ctx))
   .onSettleFailure(async (ctx) => console.error("[settle:failure]", ctx));
 
+facilitator.registerExtension(erc20ApprovalGasSponsoringExtension);
 facilitator.register("eip155:46630", new ExactEvmScheme(robinhoodSigner, { eip6492AllowedFactories: [] }));
 facilitator.register("eip155:46630", new UptoEvmScheme(robinhoodSigner));
 facilitator.register("eip155:97", new ExactEvmScheme(bscSigner, { eip6492AllowedFactories: [] }));
