@@ -24,7 +24,7 @@
 - `app/api/x402/*` — implements the 402-challenge/response cycle for deposit and withdrawal endpoints
 - `services/ledger` — the only code path permitted to mutate a user's table balance
 - `services/rng` — provably-fair seed generation and commit/reveal, isolated from the ledger and from any client-writable path
-- `services/settlement` — background worker; submits signed Permit2/EIP-3009 authorizations to chain via the facilitator, reconciles on-chain confirmations back into the ledger
+- `services/settlement` — reconciliation module, not a background worker. `reconcileSettledDeposit()` is invoked synchronously via `resourceServer.onAfterSettle(...)`, registered inside the x402 deposit route handler (`src/app/api/x402/deposit/route.ts`); it runs inline in the same request as the deposit, not as a separate process. On-chain verify/settle submission itself is handled by the self-hosted `facilitator/` service via `@x402/core`'s `x402HTTPResourceServer` — `services/settlement` only picks up once that resolves, and credits `services/ledger` with the confirmed tx hash and amount
 
 ## Storage Model
 
