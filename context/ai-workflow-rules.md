@@ -45,6 +45,50 @@ Do not modify the following unless explicitly instructed:
 - Generated UI library components (`components/ui/*`)
 - Any third-party library internals
 
+## Editing Existing Files
+
+Before building any anchored replacement (or any find-and-replace) for
+a file, read the anchor's real bytes from the file itself, in the same
+session, immediately before writing the script:
+
+```bash
+sed -n '/START_PATTERN/,/END_PATTERN/p' path/to/file
+cat -evt path/to/file          # note: BSD cat on macOS has no -A
+```
+
+Never reconstruct an anchor from a file dump pasted earlier in the
+conversation. Chat transcription does not preserve leading whitespace
+reliably, and an anchor that is correct in content but wrong by two
+spaces of indentation fails the same way a wrong anchor does. This
+promoted to a standing rule after three mismatched-anchor aborts in a
+single session (see Session Notes (cont. 9)); the aborts were safe, but
+each cost a round-trip.
+
+Every replacement script must still verify `text.count(anchor) == 1`
+and exit without writing on any mismatch.
+
+## Verifying Third-Party Library Behavior
+
+A type signature, a `.d.ts`, or a plausible-sounding method name is not
+evidence that something is wired to anything. Before integrating
+against any SDK behavior, read the installed compiled implementation:
+
+```bash
+# in a scratch dir, not the repo
+npm pack <package>@<exact-version> && tar -xzf <package>-<version>.tgz
+grep -n "functionName" package/dist/cjs/index.js
+```
+
+This project has repeatedly lost time to the opposite habit:
+`ExactEvmScheme.enhancePaymentRequirements` looked like the extension
+hook and is a no-op stub; `signTransaction` was assumed to belong to
+`FacilitatorEvmSigner` and belongs to `ClientEvmSigner`;
+`trySignErc20ApprovalExtension` silently returns `undefined` when
+`readContract` is absent rather than erroring; and
+`RouteConfig.extensions` needed an object where a boolean type-checked
+fine. Each was found only by reading compiled source, and each was
+invisible to `tsc`.
+
 ## Keeping Docs in Sync
 
 Update the relevant context file whenever implementation changes:

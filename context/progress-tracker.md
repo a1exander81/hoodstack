@@ -11,22 +11,36 @@
   domain's currency, and `facilitator/` being untracked are all
   resolved (see Completed). `creditDeposit()` is now wired into a real call site
   (`services/settlement`, PR #7) and verified against a real settled
-  deposit -- that gap from prior sessions is closed. A landing/lobby
-  mockup exists (not yet ported
-  into real components) and the chat feature is fully architected with
-  two decisions locked, but neither is built -- both are new threads
-  from this session, not carried-over blockers.
+  deposit -- that gap from prior sessions is closed. **Both deposit
+  rails are now verified end to end against real settled on-chain
+  transactions**: Robinhood Chain/USDG via EIP-3009 (PR #7), and BSC
+  Testnet/MockUSDT via Permit2 (this session, tx `0xffc1cb99...`,
+  ledger entry `cmsr61q5o0000iwv9f0bz6dnu`, on-chain balances confirmed
+  independently with `cast`). The BSC path required six separate
+  root-caused fixes and a dev-only burner signer to drive at all --
+  Rabby rejects `eth_signTransaction`, so no browser wallet currently
+  tested can complete the Permit2 approval leg (see Completed). A
+  landing/lobby mockup exists (not yet ported into real components) and
+  the chat feature is fully architected with two decisions locked, but
+  neither is built.
 
 ## Current Goal
 
-- No single actively-blocking item remains. The production domain is
-  confirmed current, `facilitator/` is committed and merged, and a
-  Vercel build break that surfaced along the way (see Completed) is
-  fixed and verified. `creditDeposit()` is wired into a real call site and verified live
-  in production (`hoodstack-tawny.vercel.app`, commit `1922147`). Top
-  candidates from Next Up: port the landing/lobby mockup into real
-  `src/app/(marketing)` components, get a domain in front of the VPS
-  so the facilitator (and eventually chat) can actually deploy there,
+- No single actively-blocking item remains, but two real gaps opened
+  this session and should not be mistaken for finished work. First:
+  the BSC/Permit2 *deposit* path is verified, yet the
+  `erc20ApprovalGasSponsoring` top-up has still never actually fired
+  -- the successful settle rode a pre-existing `maxUint256` allowance,
+  so a fresh-burner test is required before sponsorship can be called
+  working (Next Up item 2). Second: no browser wallet tested can
+  complete the BSC approval leg, so the Permit2 rail currently has no
+  viable player-facing signer at all -- only the dev-only burner. That
+  is a product-level blocker for BSC, not a test-harness detail, and
+  needs its own investigation (Rabby's `eth_signTransaction` behavior,
+  or an alternative approval flow). Otherwise: the gas wallet needs a
+  rate limit / auth gate before production, and the older candidates
+  still stand -- port the landing/lobby mockup into real
+  `src/app/(marketing)` components, get a domain in front of the VPS,
   and settle the real house treasury custody question.
 
 ## Completed
@@ -474,9 +488,80 @@
     unsafe for anything beyond testnet as-is: anyone who can produce a
     validly-signed MockUSDT approval (trivial, given `faucet()` is
     open) can trigger a top-up to any address today.
-  - Still blocks a real end-to-end BSC test: `/dev/x402-test`'s
-    `ClientEvmSigner` still lacks `signTransaction`/
-    `getTransactionCount`/`estimateFeesPerGas` (see Next Up).
+  - RESOLVED (next session): `/dev/x402-test`'s `ClientEvmSigner` was
+    wired with `signTransaction`/`getTransactionCount`/
+    `estimateFeesPerGas`/`readContract`, and the BSC/Permit2 deposit
+    path settled end to end -- see the entry below.
+
+- **BSC/Permit2 deposit path verified end to end.** tx
+  `0xffc1cb99fa50ada79e5474520795982cdb90a397434bc97525c8d490c946d845`
+  on BSC Testnet, 1.01 MockUSDT, payer
+  `0xb8cf1A1189a3Bb16334808b795B44498D4e0B176` -> the disposable test
+  treasury `0x13864051772FDFBce895d21a483eee02edaeB445`. Verified three
+  independent ways, not from the 200 alone: facilitator's
+  `[settle:after]` showed `result.success: true` with the tx hash;
+  `services/settlement` logged `deposit credited -- ... entry
+  cmsr61q5o0000iwv9f0bz6dnu`; and `cast call balanceOf` confirmed the
+  burner at `3990000` (5.0 - 1.01) and the treasury at `1010000`, both
+  matching to the atomic unit. Six separate bugs were root-caused to
+  get here, every one by reading the installed packages' compiled
+  source rather than docs or type signatures:
+  - **`registerExactEvmScheme` with no `networks` option registers a
+    `eip155:*` wildcard**, so `x402Client.selectPaymentRequirements`
+    accepted every entry in `accepts[]` and took the first one --
+    always Robinhood/46630, regardless of the connected chain.
+    `ClientEvmSigner` carries no chain identifier at all, so nothing
+    in that path could ever have read the wallet's real chain. This
+    directly contradicts the note in Session Notes (cont. 3) claiming
+    the client SDK "naturally matches whichever chain the connected
+    wallet is actually on" -- that was never true as implemented.
+    Fixed by passing `networks: [`eip155:${chain.id}`]`.
+  - **The BSC `accepts[]` entry had no `extra` field**, so
+    `ExactEvmScheme.createPaymentPayload`'s
+    `extra?.assetTransferMethod ?? "eip3009"` defaulted MockUSDT (which
+    has neither EIP-3009 nor EIP-2612) onto the EIP-3009 path, throwing
+    "EIP-712 domain parameters (name, version) are required". Fixed
+    with `extra: { assetTransferMethod: "permit2" }`.
+  - **`readContract` was missing from the signer.**
+    `trySignErc20ApprovalExtension`'s first line is
+    `if (!capabilities.readContract) return void 0;` -- so the entire
+    approval-sponsoring flow silently no-op'd, no error, no
+    `signTransaction` call, and the payload went out with zero Permit2
+    allowance. The facilitator then correctly rejected it with
+    `412 permit2_allowance_required`.
+  - **`RouteConfig.extensions` must be an object, not a boolean.**
+    `validateExtensions` compares the advertised value against what the
+    client echoes; `getExtensionInfo(true)` stays a raw boolean, and
+    `objectContainsSubset(true, {...signed approval info...})` falls to
+    `deepEqual(true, {...})`, which can never pass. The result was an
+    empty-body 402 with *no server-side log at all* and no facilitator
+    traffic -- rejected locally, before `/verify`. Fixed by changing
+    `erc20ApprovalGasSponsoring: true` to `: {}` (equally truthy for
+    the client's own check; vacuously true for the server's subset
+    comparison). The old value's code comment explicitly reasoned that
+    the value was "unused beyond truthiness by the client SDK" -- true
+    of the client, wrong about the server.
+  - **`.env.local` was corrupted by an `echo >>` append.** The burner
+    key landed on the same physical line as `PRIVY_VERIFICATION_KEY`'s
+    closing quote, because the preceding line had no trailing newline.
+    Broke the multi-line PEM into an unparseable value -- surfaced as
+    `TypeError: "spki" must be SPKI formatted string` and a 401 from
+    the identity gate, several layers away from the real cause.
+  - **Rabby rejects `eth_signTransaction`** with an internal reference
+    to an unrelated public RPC URL and "unknown account", despite
+    `transportType=custom` confirming the request reaches Rabby's own
+    injected provider. MetaMask refuses the method outright
+    (metamask-extension#3475, closed won't-fix). Worked around with a
+    dev-only burner signer (see below), not solved.
+- **Dev-only burner signer added to `/dev/x402-test`.** A
+  `privateKeyToAccount` local signer, gated behind
+  `NEXT_PUBLIC_BSC_TESTNET_BURNER_PRIVATE_KEY` (never committed) and a
+  UI checkbox, signs fully offline in viem and bypasses the connected
+  wallet entirely. This is the only reason a BSC deposit could be
+  driven to completion at all, given the Rabby finding above. Testnet
+  only, and it deliberately violates the "backend never holds private
+  key material" invariant in `architecture.md` for a throwaway key --
+  must not survive into anything player-facing.
 
 ## In Progress
 
@@ -488,18 +573,23 @@
    currently a disposable test address set only in local
    `.env.local` -- it is NOT a custody answer and must not reach a
    real deployment as-is.
-2. Test the erc20ApprovalGasSponsoring path against a real wallet.
-   Built and wired end to end (see Completed) -- facilitator extension
-   registered, route forwards the capability into the real 402 body,
-   both confirmed live. What's left is entirely on `/dev/x402-test`:
-   its `ClientEvmSigner` still lacks `signTransaction`/
-   `getTransactionCount`/`estimateFeesPerGas`
-   (`toClientEvmSigner(account, publicClient)` is the SDK's own
-   composer for this). Also worth doing before this is trusted:
-   sanity-check `MAX_GAS_TOPUP_WEI` against a real current BSC Testnet
-   gas price (currently derived from the SDK's own gas constants, not
-   measured), and add a rate limit / auth gate to the gas-wallet
-   top-up before this goes anywhere near production.
+2. Prove the gas-sponsorship top-up actually fires. The BSC/Permit2
+   *deposit* path is now verified end to end (see Completed), but the
+   sponsorship extension itself is NOT: the successful settle rode on
+   an allowance that was already `maxUint256` (landed by one of the
+   earlier failed attempts), so no approval was needed and no top-up
+   ever ran. There is no top-up or approval-broadcast logging anywhere
+   in the facilitator output to confirm otherwise. Test properly with a
+   FRESH burner: new key, MockUSDT only, zero BNB, no existing Permit2
+   allowance -- if that settles, sponsorship genuinely works. Still
+   outstanding alongside it: sanity-check `MAX_GAS_TOPUP_WEI` against a
+   real measured BSC Testnet gas price (currently derived from the
+   SDK's own constants), and add a rate limit / auth gate to the
+   gas-wallet top-up. That gate matters more than it looked: the gas
+   wallet (`0x3D02658E7eaB834875a0765D8CeC566b2eDc5ceA`) is an
+   operator-funded cost center paying real BNB per player deposit, and
+   today anyone who can produce a validly-signed MockUSDT approval can
+   trigger a top-up to any address.
 3. Decide: keep or strip the temporary `[http]` request logger in
    `facilitator/index.ts` -- now merged to `main` as-is; still an open
    decision, not blocking anything.
@@ -571,6 +661,15 @@
   username when a Privy DID has both an embedded and an external
   wallet? Small in scope but unresolved -- flagged when the
   wallet-prefix username decision was locked in.
+- Which Privy DID is the canonical test identity? Tonight's deposit
+  credited `did:privy:cmsmrt71l00a80ckz455i9ha2`, but PR #7's
+  verification credited `did:privy:cmsn52rxu02ye0cl11k3aqoy0`. A second
+  DID was almost certainly created by the mid-session Google re-login
+  after the 401. Harmless on testnet, but it is the "two separately-
+  created DIDs are never auto-merged" scenario from Architecture
+  Decisions observed live, with ledger balance now split across both --
+  worth deciding which is canonical before any further ledger
+  verification work treats one as authoritative.
 
 ## Architecture Decisions
 
@@ -1012,3 +1111,63 @@ degrades. Reject any provider that cannot satisfy this.
   logic, matching the review bar `ai-workflow-rules.md` sets for
   `services/ledger`/`services/rng` even though this code doesn't
   technically live in either path.
+
+## Session Notes (cont. 9)
+
+- **Anchor mismatches from chat-pasted whitespace happened three times
+  in one session** -- `route.ts`'s `extensions:` line (2-space indent,
+  anchor built with 4), `route.ts`'s BSC `accepts[]` entry (same), and
+  `page.tsx`'s `signTransaction` block (a `console.error` line from an
+  earlier diagnostic pass that the anchor omitted). All three aborted
+  safely with zero writes, exactly as designed -- but each cost a
+  round-trip. Per closing ritual #5, third occurrence promotes this
+  from a note to a standing rule: read the real bytes
+  (`sed -n '/pattern/,/pattern/p'` or `cat -evt`) before building any
+  anchor, never reconstruct one from a terminal paste earlier in the
+  conversation. Chat transcription does not preserve leading
+  whitespace reliably.
+- **A silent local rejection can look exactly like a network failure.**
+  The `extensions: true` bug produced an empty-body 402, no thrown
+  client error, no server log line, and zero facilitator traffic --
+  `processHTTPRequest` rejected it locally at `validateExtensions`,
+  before `/verify`. Time was lost theorizing about transports and
+  wallet internals. The diagnostic that actually worked: notice which
+  log line is ABSENT (`handleSettlement`'s `console.error` never fired,
+  so the failure was upstream of settlement entirely) and narrow from
+  there.
+- **Browser DevTools console was requested four times and never
+  successfully captured.** `console.log` diagnostics were invisible;
+  Next's dev error overlay only mirrors thrown errors, so
+  `console.log` never surfaced anywhere the person could see it.
+  What worked immediately: embedding the diagnostic INTO the thrown
+  error's message, which lands in the page's own log panel. For this
+  project, prefer thrown-error diagnostics over `console.log` --
+  they reach the same place the person is already reading.
+- **Multi-line values in `.env.local` are fragile.** `echo 'KEY=...'
+  >> .env.local` appends without checking whether the previous line
+  ended in a newline; here it welded the burner key onto
+  `PRIVY_VERIFICATION_KEY`'s closing quote, silently corrupting a
+  multi-line PEM. The error surfaced four layers away as an SPKI
+  parse failure inside Privy's token verification. Check with
+  `cat -evt` (BSD `cat` has no `-A`) after any `>>` append to a file
+  holding multi-line values.
+- **Two wallet extensions racing for `window.ethereum` produced a
+  recurring `evmAsk.js "Cannot redefine property: ethereum"` error**
+  that persisted across several attempted fixes and cost real time.
+  Brave's built-in wallet injects independently of any extension and
+  needs `brave://settings/web3` -> Default Ethereum wallet ->
+  Extensions, plus a full browser restart. Worth settling this once
+  per browser profile rather than re-diagnosing it mid-session.
+- **Backslash line continuations don't survive chat copy/paste
+  reliably.** A multi-line `cast send` lost its continuations, so zsh
+  ran the first line alone (defaulting to `localhost:8545`, connection
+  refused) and then tried to execute `--value`/`--rpc-url` as
+  standalone commands. Prefer single unbroken lines for commands
+  handed over in chat, however long.
+- **Placeholder syntax needs to be unrunnable, not just labeled.**
+  `BURNER=<paste the address>` was pasted verbatim; zsh read `<` as a
+  redirect and threw a parse error. Same class as the Session Notes
+  (cont. 7) lesson about edit-first commands looking identical to
+  runnable ones -- the fix that works is making the placeholder
+  syntactically obvious (`0xYOUR_ADDRESS_HERE`), not adding prose
+  around it.
