@@ -22,3 +22,8 @@ meaningful implementation change.
 If implementation changes the architecture, scope, or
 standards documented in the context files, update the
 relevant file before continuing.
+
+At the end of any session that changed code, docs, or a
+real decision, read `context/closing-ritual.md` and run
+its five rituals in order -- don't reconstruct the ritual
+from memory or a past session's summary.
