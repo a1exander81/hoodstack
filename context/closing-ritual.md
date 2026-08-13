@@ -107,29 +107,98 @@ git checkout main && git pull && git branch -d <branch-name>
 Format, every time:
 
 ```
-Covered this session: <2-5 sentences of real narrative — what was
-built, what was verified and how, any dead ends or wrong guesses that
-were caught and corrected, any real decisions made and why>
+End goal & progress
+Goal: <one-line restatement of project-overview.md's core goal>
 
+<one row per real workstream -- a directory or feature area from
+architecture.md's System Boundaries, or a phase from Current Phase --
+not an invented category>
+<workstream name>          <ASCII bar, 20 chars>  <NN%>  <status>
+...
+────────────────────────────────────────────────────────────
+Overall                     <ASCII bar>  ~<NN%>
+```
+
+Flow status: `<the real steps from project-overview.md's Core User
+Flow, each marked done/pending -- e.g. Sign up ✅ → Verify ⬜ →
+Connect/fund wallet ✅ → ...>`
+
+<1-3 sentences: what moved tonight relative to last session, and what
+is still the largest unstarted chunk of the whole product -- named
+honestly, not softened>
+```
+
+**Building the progress table honestly, not decoratively:**
+
+- Every percentage must trace back to a real, verifiable claim already
+  in `progress-tracker.md`'s Completed section (a tx hash, a commit, a
+  confirmed log line) -- never estimate from a general sense of "this
+  feels mostly done."
+- A percentage under 100% must be paired with what's concretely still
+  missing (`✅ module built, ⬜ not wired to a caller`), not just a
+  number.
+- `Overall` is an eyeballed blend across workstreams, not a computed
+  average of the bars above it -- don't imply false precision.
+- The ASCII table is deliberately plain text: it survives copy/paste
+  into a plain-text next-session brief and stays readable in a
+  `git diff` if this ever gets pasted into a commit body. An
+  interactive Visualizer widget, if built for a given session,
+  supplements this table -- it never replaces it, since the widget
+  itself doesn't persist into the next session's context the way this
+  file's text does.
+
+```
 Do next:
 1. <highest-priority next action>
 2. ...
 
 Do NOT: <short list of guardrails specific to what could go wrong if
-someone — Claude or the person — picks this back up carelessly>
+someone -- Claude or the person -- picks this back up carelessly>
 
-#MAC — start next session:
+#MAC -- start next session:
 ```bash
 <exact commands to get both dev servers / whatever's needed running>
 ```
 ```
 
-Optional addition if it's useful for that particular session: a
-progress-bar/flow-status visual summarizing overall project state.
-This has been used in some past sessions and skipped in others — it's
-a nice-to-have for orienting quickly, not a required part of the
-ritual. Don't let building it substitute for the real `Do next`/`Do
-NOT` content above.
+## Special instructions
+
+Only for things that need the person's own action beyond reading the
+tracker -- not a restatement of a Next Up item. The test: would this
+be silently lost or missed if the person only skimmed the numbered
+`Do next` list? Typical cases:
+
+- An artifact or file that exists only as this session's own output
+  (a generated mockup, a downloaded asset) and was never committed --
+  say so explicitly and say where to get it before the session ages
+  out of easy reach.
+- A file that's now stale somewhere the person might trust it (like
+  this Project's file panel) -- point at exactly which file and where
+  to drag it from, same as ritual 4 already does for
+  `progress-tracker.md`.
+
+If nothing this session needs the person's own action beyond the
+normal next-session pickup, write "None this session" rather than
+omitting the section -- an omitted section reads as "not checked," not
+as "checked, nothing found."
+
+## Unmentioned but worth flagging
+
+Things that don't fit anywhere else in this brief but shouldn't be
+allowed to quietly age out of visibility:
+
+- Genuinely new findings from tonight that don't belong in `Do next`
+  because they're not actionable yet -- an untracked file nobody's
+  decided on, a stray directory, a discrepancy noticed but not
+  investigated.
+- A compact one-line reminder of standing blockers that haven't moved
+  in a while (licensing/jurisdiction/trademark clearance, Vercel plan
+  tier before launch, etc.) -- not the full explanation each time,
+  just enough that they don't silently drop off the radar because
+  they're always "someone else's problem, later."
+
+If nothing new surfaced, write "Nothing new" rather than omitting the
+section, for the same reason as above.
 
 ---
 
@@ -179,6 +248,6 @@ reason.
 
 - [ ] 1. `progress-tracker.md` updated, anchor-verified against real content, committed
 - [ ] 2. Code changes committed via the right path (branch+PR or direct), pushed
-- [ ] 3. Next-session brief written (Covered / Do next / Do NOT / #MAC)
+- [ ] 3. Next-session brief written (End goal & progress / Do next / Do NOT / Special instructions / Unmentioned but worth flagging / #MAC)
 - [ ] 4. Updated `context/*.md` files dragged into the Project file panel
 - [ ] 5. Any 3rd-occurrence mistake promoted to a standing rule; anything less logged in Session Notes only
