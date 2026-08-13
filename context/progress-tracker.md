@@ -428,6 +428,55 @@
   about MockUSDT/EIP-3009/Permit2 below. Still unbuilt: the facilitator's
   ERC-20 Approval Gas Sponsorship path that actually uses this domain for
   the one-time approval (see Next Up).
+- **ERC-20 Approval Gas Sponsorship built and wired end to end**
+  (`feat/erc20-approval-gas-sponsoring`, squashed and merged to
+  `main`). Closes out Next Up item 2 below (rewritten, not removed --
+  real-wallet testing is still outstanding, see below). Three separate
+  SDK gaps found by reading the real installed `@x402/evm@2.21.0`/
+  `@x402/core@2.21.0` compiled source, not assumed from docs, and
+  confirmed against a live decoded 402 response, not just `tsc`:
+  - `FacilitatorEvmSigner` (facilitator/index.ts's existing
+    `buildSigner`) needed no changes -- `signTransaction`/
+    `getTransactionCount`/`estimateFeesPerGas` belong to
+    `ClientEvmSigner`, not the facilitator signer. Caught by `tsc`
+    against the real installed types after an initial wrong guess.
+  - `facilitator/index.ts` registers a new `FacilitatorExtension`
+    under key `erc20ApprovalGasSponsoring`, implementing
+    `sendTransactions` and `waitForTransactionReceipt`.
+    `sendTransactions` decodes the client's pre-signed approval
+    transaction (`parseTransaction`/`recoverTransactionAddress`) to
+    get the exact gas cost and payer address, tops up the payer's
+    native-token balance from the gas wallet only if short (capped at
+    `MAX_GAS_TOPUP_WEI`, currently a guess grounded in the SDK's own
+    `ERC20_APPROVE_GAS_LIMIT`/`DEFAULT_MAX_FEE_PER_GAS` constants, not
+    a measured BSC Testnet gas price), broadcasts the approval, then
+    broadcasts the settle transaction. Verified live: `/supported`
+    lists `erc20ApprovalGasSponsoring` in its top-level `extensions`.
+  - The route side needed real investigation, not assumption:
+    `@x402/evm/exact/server`'s `ExactEvmScheme.enhancePaymentRequirements`
+    looked like the obvious hook (it's literally passed
+    `extensionKeys`) but its installed implementation is a no-op stub
+    that discards them. The real mechanism, found by reading
+    `@x402/core`'s compiled resource-server source directly, is
+    `RouteConfig.extensions` (`Record<string, unknown>`, route-wide,
+    not per-`accepts[]`-entry) -- `route.ts`'s `routeConfig` now sets
+    `extensions: { erc20ApprovalGasSponsoring: true }`. Confirmed live
+    by decoding a real 402 response: `extensions` now appears at the
+    top level alongside `accepts[]`, matching the real `PaymentRequired`
+    type exactly.
+  - Not yet verified: whether declaring `extensions` route-wide is
+    actually harmless for the Robinhood/USDG `accepts[]` entry (EIP-3009
+    direct path, no Permit2 approval needed) -- expected to be a no-op
+    there since the client's `trySignErc20ApprovalExtension` only fires
+    within the Permit2-approval signing flow, but not independently
+    confirmed against a real EIP-3009 deposit.
+  - Gas-wallet top-up has no rate limit or authentication gate --
+    unsafe for anything beyond testnet as-is: anyone who can produce a
+    validly-signed MockUSDT approval (trivial, given `faucet()` is
+    open) can trigger a top-up to any address today.
+  - Still blocks a real end-to-end BSC test: `/dev/x402-test`'s
+    `ClientEvmSigner` still lacks `signTransaction`/
+    `getTransactionCount`/`estimateFeesPerGas` (see Next Up).
 
 ## In Progress
 
@@ -439,16 +488,18 @@
    currently a disposable test address set only in local
    `.env.local` -- it is NOT a custody answer and must not reach a
    real deployment as-is.
-2. Build and test the facilitator's ERC-20 Approval Gas Sponsorship
-   path for BSC deposits. Confirmed this session: `MockUSDT` is a
-   bare OpenZeppelin `ERC20` (read directly from
-   `contracts/mock-usdt/src/Counter.sol`) -- no EIP-3009, no
-   EIP-2612 `permit`, no domain of its own. The BSC deposit path
-   must go through Permit2, exactly as `x402-payment-architecture.md`
-   already assumed, but the facilitator-sponsored one-time approval
-   this requires hasn't been built or tested. Permit2's own domain is
-   now verified live on BSC Testnet (see Completed), so this is
-   unblocked to start.
+2. Test the erc20ApprovalGasSponsoring path against a real wallet.
+   Built and wired end to end (see Completed) -- facilitator extension
+   registered, route forwards the capability into the real 402 body,
+   both confirmed live. What's left is entirely on `/dev/x402-test`:
+   its `ClientEvmSigner` still lacks `signTransaction`/
+   `getTransactionCount`/`estimateFeesPerGas`
+   (`toClientEvmSigner(account, publicClient)` is the SDK's own
+   composer for this). Also worth doing before this is trusted:
+   sanity-check `MAX_GAS_TOPUP_WEI` against a real current BSC Testnet
+   gas price (currently derived from the SDK's own gas constants, not
+   measured), and add a rate limit / auth gate to the gas-wallet
+   top-up before this goes anywhere near production.
 3. Decide: keep or strip the temporary `[http]` request logger in
    `facilitator/index.ts` -- now merged to `main` as-is; still an open
    decision, not blocking anything.
@@ -921,3 +972,43 @@ degrades. Reject any provider that cannot satisfy this.
   wrong, but the fix was to have the real file's content pasted fresh
   and reconstruct it (with overlap verified programmatically, not
   eyeballed) before touching it again.
+
+## Session Notes (cont. 8)
+
+- **Splicing a verified sandbox reproduction into the real repo
+  dropped its imports.** The `erc20ApprovalGasSponsoring` extension
+  was type-checked clean in a full standalone sandbox file (imports
+  included), but only the new *section* -- not the imports -- was
+  spliced into the real `facilitator/index.ts`, on the assumption the
+  real file's existing imports already covered the new code's
+  dependencies. They didn't (`parseTransaction`,
+  `recoverTransactionAddress`, `FacilitatorExtension` were all new).
+  Caught immediately by a real `tsc --noEmit` against the actual repo,
+  not silently shipped, but cost a second anchor-verified fix script.
+  Worth a standing habit: when handing over a partial extract of a
+  sandbox-verified file, explicitly diff its import list against the
+  target file's real current imports before generating the splice,
+  rather than assuming overlap.
+- **`ExactEvmScheme.enhancePaymentRequirements` -- the obviously-named
+  hook, given it's literally passed `extensionKeys` -- turned out to
+  be a no-op stub in the installed `@x402/evm@2.21.0`.** Looked like
+  the right integration point from its signature alone; reading the
+  compiled `.mjs` (not just the `.d.mts`) showed it just discards the
+  argument. The real mechanism, `RouteConfig.extensions`, was found by
+  tracing `enrichExtensions`/`registerExtension` through `@x402/core`'s
+  actual resource-server source. Same lesson as the `signTransaction`
+  mix-up earlier the same session: a plausible-looking hook name in a
+  `.d.ts` is not confirmation it's wired to anything -- check the
+  compiled implementation, not just the type signature.
+- **Facilitator-side gas sponsorship required real design work, not
+  just wiring.** Broadcasting a pre-signed transaction doesn't make
+  the broadcaster pay its gas -- gas is deducted from whoever signed
+  it. Not obvious from the SDK's naming (`sendTransactions` on a
+  `FacilitatorExtension`'s signer) until reading
+  `settlePermit2WithERC20Approval`'s actual compiled implementation.
+- Squashed and merged as its own branch
+  (`feat/erc20-approval-gas-sponsoring`) rather than direct to `main`
+  -- deliberate, given this touches the gas wallet's actual spending
+  logic, matching the review bar `ai-workflow-rules.md` sets for
+  `services/ledger`/`services/rng` even though this code doesn't
+  technically live in either path.
