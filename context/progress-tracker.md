@@ -19,29 +19,49 @@
   independently with `cast`). The BSC path required six separate
   root-caused fixes and a dev-only burner signer to drive at all --
   Rabby rejects `eth_signTransaction`, so no browser wallet currently
-  tested can complete the Permit2 approval leg (see Completed). A
+  tested can complete the Permit2 approval leg (see Completed).
+  **`erc20ApprovalGasSponsoring` is now proven to genuinely fire**, not
+  just wired: a fresh burner (confirmed at 0 BNB, 0 MockUSDT, 0 Permit2
+  allowance beforehand) completed a real deposit (tx
+  `0x8ea2f5201e...`, ledger entry `cmsrfbesm00006hv9xp2ob9d0`), with
+  the sponsorship itself independently confirmed via the burner's
+  on-chain nonce (0 -> 1), remaining native BNB, and Permit2 allowance
+  (0 -> `maxUint256`) -- none reachable unless the facilitator
+  genuinely topped up a zero-balance wallet first. The player-facing
+  signer gap is unchanged: this still only runs via the dev-only
+  burner. A
   landing/lobby mockup exists (not yet ported into real components) and
   the chat feature is fully architected with two decisions locked, but
   neither is built.
 
 ## Current Goal
 
-- No single actively-blocking item remains, but two real gaps opened
-  this session and should not be mistaken for finished work. First:
-  the BSC/Permit2 *deposit* path is verified, yet the
-  `erc20ApprovalGasSponsoring` top-up has still never actually fired
-  -- the successful settle rode a pre-existing `maxUint256` allowance,
-  so a fresh-burner test is required before sponsorship can be called
-  working (Next Up item 2). Second: no browser wallet tested can
-  complete the BSC approval leg, so the Permit2 rail currently has no
-  viable player-facing signer at all -- only the dev-only burner. That
-  is a product-level blocker for BSC, not a test-harness detail, and
-  needs its own investigation (Rabby's `eth_signTransaction` behavior,
-  or an alternative approval flow). Otherwise: the gas wallet needs a
-  rate limit / auth gate before production, and the older candidates
-  still stand -- port the landing/lobby mockup into real
-  `src/app/(marketing)` components, get a domain in front of the VPS,
-  and settle the real house treasury custody question.
+- The `erc20ApprovalGasSponsoring` gap flagged at the top of this
+  file is now closed: a genuinely fresh burner (verified at 0 BNB, 0
+  MockUSDT, 0 Permit2 allowance beforehand) completed a real BSC
+  deposit, and the sponsorship mechanism itself -- not just the
+  deposit settling -- was independently confirmed via on-chain state
+  deltas (nonce, native balance, allowance), not inferred from a 200
+  response (see Completed). What's still a real, unresolved gap: no
+  browser wallet tested can complete the BSC approval leg, so the
+  Permit2 rail currently has no viable player-facing signer at all --
+  only the dev-only burner. That is a product-level blocker for BSC,
+  not a test-harness detail, and needs its own investigation (Rabby's
+  `eth_signTransaction` behavior, or an alternative approval flow).
+  Now that sponsorship is proven to genuinely spend the gas wallet's
+  real BNB, the missing rate limit / auth gate on that top-up matters
+  more than it did as a theoretical risk -- anyone who can produce a
+  validly-signed MockUSDT approval can trigger a real spend today.
+  Separately, a live discrepancy surfaced this session: the x402
+  client submitted a signed payload for Robinhood Chain
+  (`eip155:46630`) despite the connected wallet reporting BSC
+  (`eip155:97`) throughout, contradicting a prior session's claim that
+  `networks: [eip155:${chain.id}]` fully scopes client-side selection
+  to the connected chain -- worth its own investigation (see Session
+  Notes). Otherwise: the older candidates still stand -- port the
+  landing/lobby mockup into real `src/app/(marketing)` components, get
+  a domain in front of the VPS, and settle the real house treasury
+  custody question.
 
 ## Completed
 
@@ -562,6 +582,60 @@
   only, and it deliberately violates the "backend never holds private
   key material" invariant in `architecture.md` for a throwaway key --
   must not survive into anything player-facing.
+- **BSC/Permit2 gas-sponsorship extension proven to genuinely fire,
+  not just settle on a pre-existing allowance.** Prior session's
+  successful BSC deposit rode a `maxUint256` Permit2 allowance already
+  in place, leaving `erc20ApprovalGasSponsoring` itself unverified --
+  flagged explicitly in Next Up. This session: generated a fresh
+  burner (`0xC36b3ae41925d461664BDE96f2f2CE8E524C512D`) via
+  `openssl rand -hex 32`, confirmed on-chain via `cast` at exactly
+  0 BNB / 0 MockUSDT / 0 Permit2 allowance before touching it -- the
+  genuine precondition the prior session's Next Up item called for.
+  Funded MockUSDT only (never native gas) via the facilitator's own
+  gas wallet, which self-minted 5.0 MockUSDT via `faucet()` then
+  `transfer()`'d it to the burner -- the burner's native balance
+  stayed at 0 throughout funding. Ran a real deposit through
+  `/dev/x402-test` with the burner signer selected; settled on BSC
+  Testnet, tx
+  `0x8ea2f5201e82cfa92b2fc564340a2889e8ff64e725c2e95c698c7f765fab35ef`.
+  Sponsorship itself confirmed independently via on-chain state
+  deltas, not the facilitator's own success log: burner nonce
+  0 -> 1 (only possible if it broadcast an approval, which it could
+  only pay for if funded first), burner native BNB 0 -> a nonzero
+  remainder (direct evidence of a top-up), and burner's Permit2
+  allowance 0 -> `maxUint256` (confirms the broadcast tx was the
+  approval it needed to be). `cast receipt` on the settle tx
+  independently confirmed `status 1`, `to` =
+  `0x402085c248EeA27D92E8b30b2C58ed07f9E20001` (the
+  `x402ExactPermit2Proxy`), and the nested USDT `Transfer` log moving
+  exactly 1,010,000 units. Ledger credit independently confirmed via a
+  disposable script (`scripts/verify-bsc-sponsorship-ledger.ts`,
+  deleted after use) querying `prisma.ledgerEntry.findUnique` directly
+  by `txHash` -- real new entry `cmsrfbesm00006hv9xp2ob9d0`, crediting
+  1,010,000 micro-USDT on `chainId` 97 to
+  `did:privy:cmsmrt71l00a80ckz455i9ha2` (same DID as the prior
+  session's BSC deposit, not a new split -- see Open Questions).
+  Closes out Next Up item 2's core question for real.
+  - **Discrepancy found, not yet resolved:** the facilitator log shows
+    the client's *first* `/verify` attempt targeted
+    `network: 'eip155:46630'` (Robinhood Chain) with a real signed
+    EIP-3009 payload, despite the connected wallet reporting BSC
+    (`eip155:97`) throughout -- rejected only because the burner has
+    never held Robinhood-chain funds
+    (`invalid_exact_evm_insufficient_balance`). Only the second
+    `/verify`, for `eip155:97`, succeeded. This directly contradicts
+    the claim in a prior session's fix that
+    `networks: [eip155:${chain.id}]` fully scopes client-side
+    selection to the connected chain -- either that scoping only
+    affects requirement *preference*, not signature generation, or
+    there's a fallback path through `accepts[]` still active. Not
+    investigated further tonight; flagged for its own session.
+  - **Gap noted, not fixed:** the facilitator's `sendTransactions`
+    extension logs nothing about the top-up or approval broadcast
+    itself -- proving sponsorship fired required reconstructing it
+    from on-chain state deltas via `cast`, not reading a log line.
+    Worth adding explicit logging so this is observable without a
+    manual verification round-trip next time.
 
 ## In Progress
 
@@ -573,23 +647,23 @@
    currently a disposable test address set only in local
    `.env.local` -- it is NOT a custody answer and must not reach a
    real deployment as-is.
-2. Prove the gas-sponsorship top-up actually fires. The BSC/Permit2
-   *deposit* path is now verified end to end (see Completed), but the
-   sponsorship extension itself is NOT: the successful settle rode on
-   an allowance that was already `maxUint256` (landed by one of the
-   earlier failed attempts), so no approval was needed and no top-up
-   ever ran. There is no top-up or approval-broadcast logging anywhere
-   in the facilitator output to confirm otherwise. Test properly with a
-   FRESH burner: new key, MockUSDT only, zero BNB, no existing Permit2
-   allowance -- if that settles, sponsorship genuinely works. Still
-   outstanding alongside it: sanity-check `MAX_GAS_TOPUP_WEI` against a
-   real measured BSC Testnet gas price (currently derived from the
-   SDK's own constants), and add a rate limit / auth gate to the
-   gas-wallet top-up. That gate matters more than it looked: the gas
-   wallet (`0x3D02658E7eaB834875a0765D8CeC566b2eDc5ceA`) is an
-   operator-funded cost center paying real BNB per player deposit, and
-   today anyone who can produce a validly-signed MockUSDT approval can
-   trigger a top-up to any address.
+2. Add a rate limit / auth gate to the gas-wallet top-up before any
+   further use beyond isolated testing. The gas-sponsorship top-up
+   itself is now PROVEN to genuinely fire (see Completed) -- a fresh,
+   verifiably-zero-balance burner completed a real deposit, confirmed
+   via on-chain nonce/balance/allowance deltas, not just a facilitator
+   success log. That closes the "does it even work" question this
+   item previously tracked. What's left: the gas wallet
+   (`0x3D02658E7eaB834875a0765D8CeC566b2eDc5ceA`) is a confirmed real
+   spend today, and today anyone who can produce a validly-signed
+   MockUSDT approval can trigger a top-up to any address -- unsafe for
+   anything beyond isolated testnet use as-is. `MAX_GAS_TOPUP_WEI`
+   itself still hasn't been directly read and compared against a
+   measured gas price (the real BSC Testnet gas price was measured
+   this session at 100,000,000 wei, and the sponsored approval
+   succeeded without under-funding in that one live test, but the
+   constant's actual value was never pulled from `facilitator/index.ts`
+   and checked against it directly).
 3. Decide: keep or strip the temporary `[http]` request logger in
    `facilitator/index.ts` -- now merged to `main` as-is; still an open
    decision, not blocking anything.
@@ -661,15 +735,18 @@
   username when a Privy DID has both an embedded and an external
   wallet? Small in scope but unresolved -- flagged when the
   wallet-prefix username decision was locked in.
-- Which Privy DID is the canonical test identity? Tonight's deposit
-  credited `did:privy:cmsmrt71l00a80ckz455i9ha2`, but PR #7's
-  verification credited `did:privy:cmsn52rxu02ye0cl11k3aqoy0`. A second
-  DID was almost certainly created by the mid-session Google re-login
-  after the 401. Harmless on testnet, but it is the "two separately-
-  created DIDs are never auto-merged" scenario from Architecture
-  Decisions observed live, with ledger balance now split across both --
-  worth deciding which is canonical before any further ledger
-  verification work treats one as authoritative.
+- Which Privy DID is the canonical test identity? `did:privy:
+  cmsmrt71l00a80ckz455i9ha2` credited a deposit in a prior session, and
+  again this session's fresh-burner sponsorship test credited the same
+  DID -- but PR #7's verification credited `did:privy:
+  cmsn52rxu02ye0cl11k3aqoy0`. A second DID was almost certainly created
+  by a mid-session Google re-login after a 401. Harmless on testnet,
+  but it is the "two separately-created DIDs are never auto-merged"
+  scenario from Architecture Decisions observed live, with ledger
+  balance now split across both, and `cmsmrt71l00a80ckz455i9ha2` now
+  the more consistently active one across two sessions -- still worth
+  deciding which is canonical before any further ledger verification
+  work treats one as authoritative.
 
 ## Architecture Decisions
 
@@ -1171,3 +1248,35 @@ degrades. Reject any provider that cannot satisfy this.
   runnable ones -- the fix that works is making the placeholder
   syntactically obvious (`0xYOUR_ADDRESS_HERE`), not adding prose
   around it.
+
+## Session Notes (cont. 10)
+
+- **Funding a fresh burner with MockUSDT only (no native gas) needs a
+  two-hop relay, not a direct call.** `faucet(uint256)` self-mints to
+  `msg.sender` only (`_mint(msg.sender, amount)`), so a wallet with
+  zero BNB can never call it directly. Worked around by having the
+  facilitator's own gas wallet (already funded with testnet BNB)
+  self-mint via `faucet()`, then `transfer()` the minted MockUSDT to
+  the target burner -- the burner's native balance never moves during
+  funding, preserving the "genuinely zero BNB" precondition a
+  sponsorship test needs. Worth reusing this pattern for any future
+  test account that needs MockUSDT without gas.
+- **A `cat -evt` on a private-key `.env.local` line was proposed, then
+  caught before running it** -- raw-byte inspection is useful for
+  diagnosing corruption, but on a line holding actual secret material
+  it would have printed the real key straight into chat. Regenerating
+  a fresh key (already needed for this session's test anyway)
+  sidestepped the need to inspect the old one at all. Worth
+  remembering as a general pattern: prefer regenerating over
+  inspecting when a file holds live secret material, even for a
+  "just checking the format" purpose.
+- **Terminal paste overlap produced misleading local errors unrelated
+  to the repo.** Two separate command blocks (a gas-price Python
+  check, and the funding relay) landed in the same paste/execution
+  window, and zsh tried to execute the first block's Python heredoc
+  lines as bare commands after the second block's real work had
+  already completed successfully (`zsh: command not found: gas_price`
+  etc.). Cosmetic and local only -- no repo or `.env.local` state was
+  affected -- but worth recognizing this error shape immediately as a
+  paste-history artifact rather than a real failure, so it doesn't
+  cost a diagnostic round-trip next time it happens.
