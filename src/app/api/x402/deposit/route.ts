@@ -102,6 +102,17 @@ const routeConfig: RouteConfig = {
       payTo: HOUSE_TREASURY_ADDRESS,
       price: priceForAsset(getUsdtBscAddress),
       maxTimeoutSeconds: 300,
+      // MockUSDT has neither EIP-3009 nor EIP-2612 (confirmed on-chain,
+      // see progress-tracker.md), so this MUST go through Permit2, not
+      // the client SDK's default EIP-3009 path. Without this,
+      // ExactEvmScheme.createPaymentPayload defaults
+      // `assetTransferMethod` to "eip3009" (paymentRequirements.extra?.assetTransferMethod
+      // ?? "eip3009", see @x402/evm's compiled exact/client source) and
+      // tries to build an EIP-712 domain this asset doesn't have,
+      // throwing "EIP-712 domain parameters (name, version) are
+      // required" -- root-caused empirically against a real BSC
+      // deposit attempt, not assumed from docs.
+      extra: { assetTransferMethod: "permit2" },
     },
   ],
   // Declared once for the whole route -- RouteConfig.extensions is not
@@ -113,7 +124,23 @@ const routeConfig: RouteConfig = {
   // (trySignErc20ApprovalExtension only checks
   // context?.extensions?.[key] for existence) -- see erc20ApprovalGasSponsoring
   // in @x402/evm's compiled source (src/shared/extensions/gasSponsoring.ts).
-  extensions: { erc20ApprovalGasSponsoring: true },
+  // MUST be an object, not a bare boolean. validateExtensions (in
+  // @x402/core's server module) compares this advertised value against
+  // whatever the client echoes back in paymentPayload.extensions --
+  // getExtensionInfo(true) stays the raw boolean `true`, and
+  // objectContainsSubset(true, {...signed approval info...}) hits its
+  // non-object branch and does a raw deepEqual(true, {...}), which can
+  // never pass. An empty object takes the object-comparison branch
+  // instead, where Object.entries({}).every(...) is vacuously true
+  // regardless of what the client echoes. Root-caused empirically: the
+  // first payload that ever built successfully (burner signer, after the
+  // readContract / BSC assetTransferMethod / network-scoping fixes) was
+  // rejected locally by this check as extension_echo_mismatch -- silently,
+  // before /verify, with an empty-body 402 and no server-side log. The
+  // replaced comment ("unused beyond truthiness by the client SDK") was
+  // right about the CLIENT's decision to attempt the extension, but the
+  // SERVER's echo-validation cares about shape, not truthiness.
+  extensions: { erc20ApprovalGasSponsoring: {} },
 };
 
 export const POST = withX402(
