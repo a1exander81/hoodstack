@@ -13,8 +13,18 @@
 // wallet, `signTransaction` falls through to `eth_signTransaction` (viem's
 // real signTransaction action, confirmed by reading its source). MetaMask
 // explicitly refuses to implement that RPC method
-// (MetaMask/metamask-extension#3475, closed won't-fix). Rabby's support is
-// NOT confirmed either way -- test empirically before trusting this path.
+// (MetaMask/metamask-extension#3475, closed won't-fix). Rabby was tested
+// empirically and ALSO rejects it. This is not a Rabby quirk: other
+// wallet implementers explicitly track eth_signTransaction as
+// "MetaMask refuse to add, we should follow them," citing the same
+// issue. Treat NO injected browser wallet as capable of this method.
+// The only viable signers are ones that hold key material outside an
+// injected provider: the dev burner below, or a Privy EMBEDDED wallet
+// (whose signTransaction goes through Privy's own RPC, not the
+// injected provider -- confirmed by reading @privy-io/react-auth's
+// compiled source). Privy FORWARDS eth_signTransaction to the injected
+// provider for externally-connected wallets, so it is no workaround
+// for Rabby/MetaMask.
 // If the BSC test throws "does not support eth_signTransaction", that's
 // this limitation, not a bug in the wiring below -- the sponsorship path
 // may need a different signer strategy entirely (e.g. a burner
@@ -24,9 +34,9 @@
 
 import { useState } from "react";
 import { useAccount, usePublicClient, useWalletClient } from "wagmi";
-import { usePrivy } from "@privy-io/react-auth";
+import { usePrivy, useWallets } from "@privy-io/react-auth";
 import type { Account, WalletClient } from "viem";
-import { createWalletClient, http } from "viem";
+import { createWalletClient, http, toHex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { x402Client, wrapFetchWithPayment } from "@x402/fetch";
 import { registerExactEvmScheme } from "@x402/evm/exact/client";
@@ -145,15 +155,118 @@ function burnerToClientSigner(
   };
 }
 
+type PrivySignTransaction = ReturnType<typeof usePrivy>["signTransaction"];
+type PrivySignTypedData = ReturnType<typeof usePrivy>["signTypedData"];
+type SignerMode = "connected" | "burner" | "privy";
+
+// Privy EMBEDDED wallet signer. Unlike the wagmi signer above, this never
+// touches an injected provider -- Privy holds the key material and signs
+// through its own RPC, which is why it can do eth_signTransaction at all.
+// (Privy FORWARDS that method to the injected provider for externally
+// connected wallets, so it is no workaround for Rabby/MetaMask.)
+// Privy's on-device wallet proxy JSON-serializes everything it sends to
+// its iframe, and JSON.stringify throws on BigInt. EIP-712 numeric values
+// are valid as decimal strings, so convert recursively rather than
+// field-by-field -- the Permit2 witness message carries bigints in
+// permitted.amount, nonce, deadline and expiration, and a field-by-field
+// pass already missed some of them once.
+function stripBigInts(value: unknown): unknown {
+  if (typeof value === "bigint") return value.toString();
+  if (Array.isArray(value)) return value.map(stripBigInts);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [
+        k,
+        stripBigInts(v),
+      ]),
+    );
+  }
+  return value;
+}
+
+function privyToClientSigner(
+  address: `0x${string}`,
+  privySignTransaction: PrivySignTransaction,
+  privySignTypedData: PrivySignTypedData,
+  publicClient: ReturnType<typeof usePublicClient>,
+): ClientEvmSigner {
+  return {
+    address,
+    signTypedData: async (message) => {
+      const { signature } = await privySignTypedData(
+        {
+          domain: stripBigInts(message.domain),
+          types: message.types as Record<string, { name: string; type: string }[]>,
+          primaryType: message.primaryType,
+          message: stripBigInts(message.message),
+        } as Parameters<PrivySignTypedData>[0],
+        { address },
+      );
+      return signature as `0x${string}`;
+    },
+    // TRAP 1: @x402/evm hardcodes `gas`; Privy's TEE path resolves
+    // gas_price as `gasPrice ?? gas`, which would submit the 55,000 gas
+    // LIMIT as a gas PRICE. Strip `gas`, pass `gasLimit`.
+    // TRAP 2: the SDK uses this return value directly as a raw serialized
+    // transaction, but Privy returns `{ signature }`. Unwrap it.
+    signTransaction: async ({
+      gas,
+      maxFeePerGas,
+      maxPriorityFeePerGas,
+      ...rest
+    }) => {
+      // TRAP 3: Privy's on-device wallet proxy JSON-serializes this
+      // request, and JSON.stringify throws on BigInt. @x402/evm hands
+      // us bigints for gas and both fee fields, so hex-encode them at
+      // this boundary. (The TEE path hex-encodes internally; the dev
+      // burner signs locally in viem, which takes bigints natively --
+      // which is why neither ever hit this.) nonce and chainId arrive
+      // as JS numbers and serialize fine.
+      const hex = (v: bigint | undefined) =>
+        v === undefined ? undefined : toHex(v);
+      const { signature } = await privySignTransaction(
+        {
+          ...rest,
+          gasLimit: hex(gas),
+          gas: hex(gas),
+          maxFeePerGas: hex(maxFeePerGas),
+          maxPriorityFeePerGas: hex(maxPriorityFeePerGas),
+        } as Parameters<PrivySignTransaction>[0],
+        { address },
+      );
+      return signature as `0x${string}`;
+    },
+    getTransactionCount: publicClient
+      ? async (args) => publicClient.getTransactionCount(args)
+      : undefined,
+    estimateFeesPerGas: publicClient
+      ? async () => publicClient.estimateFeesPerGas()
+      : undefined,
+    readContract: publicClient
+      ? (args) => publicClient.readContract(args)
+      : undefined,
+  };
+}
+
 export default function X402DepositTestPage() {
   const { address, chain } = useAccount();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
-  const { getAccessToken } = usePrivy();
+  const {
+    getAccessToken,
+    signTransaction: privySignTransaction,
+    signTypedData: privySignTypedData,
+  } = usePrivy();
+  // Privy's linked wallets, embedded and external together. The only
+  // way to tell them apart is walletClientType === "privy" (the same
+  // check Privy uses internally). createOnLogin is
+  // "users-without-wallets", so a DID that linked an external wallet
+  // first may have NO embedded wallet provisioned at all.
+  const { wallets: privyWallets } = useWallets();
   const [amount, setAmount] = useState("1.0");
   const [log, setLog] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  const [useBurner, setUseBurner] = useState(false);
+  const [signerMode, setSignerMode] = useState<SignerMode>("connected");
 
   function appendLog(line: string) {
     setLog((prev) => [...prev, line]);
@@ -183,12 +296,42 @@ export default function X402DepositTestPage() {
         `Live wallet chainId at start: ${liveChainIdAtStart} (hooks report chain ${chain?.id})`,
       );
 
-      const signer = useBurner
-        ? burnerToClientSigner(publicClient)
-        : wagmiToClientSigner(walletClient, publicClient);
+      let signer: ClientEvmSigner | undefined;
+      // Scope x402 to the network the CHOSEN SIGNER can actually act on.
+      // The burner and the embedded wallet are both BSC-only here; only
+      // the connected-wallet path should follow wagmi's chain.
+      let network: `${string}:${string}` | undefined;
+      if (signerMode === "burner") {
+        signer = burnerToClientSigner(publicClient);
+        network = `eip155:${bscTestnet.id}`;
+      } else if (signerMode === "privy") {
+        const embedded = privyWallets.find(
+          (w) => w.walletClientType === "privy",
+        );
+        if (!embedded) {
+          appendLog(
+            "No Privy embedded wallet on this DID -- createOnLogin is " +
+              '"users-without-wallets", so a DID that linked an external ' +
+              "wallet first may never have been provisioned one.",
+          );
+          return;
+        }
+        appendLog(`Using Privy embedded wallet: ${embedded.address}`);
+        signer = privyToClientSigner(
+          embedded.address as `0x${string}`,
+          privySignTransaction,
+          privySignTypedData,
+          publicClient,
+        );
+        network = `eip155:${bscTestnet.id}`;
+      } else {
+        signer = wagmiToClientSigner(walletClient, publicClient);
+        network = chain ? `eip155:${chain.id}` : undefined;
+      }
       if (!signer) {
         appendLog(
-          "Burner key not configured -- set NEXT_PUBLIC_BSC_TESTNET_BURNER_PRIVATE_KEY in .env.local.",
+          "No signer available. For burner mode, set \n"
+            + "NEXT_PUBLIC_BSC_TESTNET_BURNER_PRIVATE_KEY in .env.local.",
         );
         return;
       }
@@ -202,10 +345,32 @@ export default function X402DepositTestPage() {
       // chain. Scoping to the live connected chain is the documented fix.
       registerExactEvmScheme(client, {
         signer,
-        networks: chain ? [`eip155:${chain.id}`] : undefined,
+        // Derive the network from the SIGNER, not the connected wallet.
+        // The burner signs offline via privateKeyToAccount and is
+        // BSC-only -- wagmi's `chain` describes the browser wallet,
+        // which is unrelated to it. Passing `undefined` here registers
+        // an "eip155:*" wildcard, which makes selectPaymentRequirements
+        // take accepts[0] (always Robinhood/46630) regardless of intent.
+        // That is the root cause of the 46630-vs-97 discrepancy: the
+        // burner path was never scoped at all.
+        networks: network ? [network] : undefined,
       });
       const fetchWithPayment = wrapFetchWithPayment(fetch, client);
 
+      appendLog(
+        `Privy linked wallets: ${
+          privyWallets.length === 0
+            ? "(none)"
+            : privyWallets
+                .map((w) => `${w.walletClientType}/${w.connectorType} ${w.address}`)
+                .join(" | ")
+        }`,
+      );
+      appendLog(
+        `Embedded (privy) wallet present: ${privyWallets.some(
+          (w) => w.walletClientType === "privy",
+        )}`,
+      );
       appendLog(`Wallet: ${signer.address}`);
       appendLog(`Connected chain: ${chain?.name ?? "unknown"} (${chain?.id ?? "-"})`);
       appendLog(`Requesting deposit of ${amount}...`);
@@ -222,6 +387,52 @@ export default function X402DepositTestPage() {
       appendLog(`Response status: ${response.status}`);
       const body = await response.json().catch(() => null);
       appendLog(`Response body: ${JSON.stringify(body, null, 2)}`);
+
+      // An empty-body 402 is NOT a silent failure. x402 v2 carries the
+      // challenge -- including the invalidReason from
+      // findMatchingRequirements / validateExtensions -- in the
+      // PAYMENT-REQUIRED header. Decode it or the real cause stays
+      // invisible and looks like a network problem.
+      if (!response.ok) {
+        // Dump everything -- guessing the header name cost a round-trip once
+        // already. The real one turned out to be `payment-response`.
+        appendLog(
+          `All response headers:\n${[...response.headers.entries()]
+            .map(([k, v]) => `  ${k}: ${v}`)
+            .join("\n")}`,
+        );
+        const challenge =
+          response.headers.get("payment-response") ??
+          response.headers.get("PAYMENT-REQUIRED") ??
+          response.headers.get("payment-required");
+        if (!challenge) {
+          appendLog(
+            `No PAYMENT-REQUIRED header. Headers seen: ${[
+              ...response.headers.keys(),
+            ].join(", ")}`,
+          );
+        } else {
+          appendLog(`PAYMENT-REQUIRED (raw): ${challenge}`);
+          try {
+            const decoded = JSON.parse(atob(challenge));
+            appendLog(
+              `PAYMENT-REQUIRED (decoded): ${JSON.stringify(decoded, null, 2)}`,
+            );
+          } catch {
+            try {
+              appendLog(
+                `PAYMENT-REQUIRED (as JSON): ${JSON.stringify(
+                  JSON.parse(challenge),
+                  null,
+                  2,
+                )}`,
+              );
+            } catch {
+              appendLog("PAYMENT-REQUIRED is neither base64 nor JSON.");
+            }
+          }
+        }
+      }
 
       appendLog(
         response.ok
@@ -249,12 +460,34 @@ export default function X402DepositTestPage() {
       <div style={{ marginTop: 8 }}>
         <label>
           <input
-            type="checkbox"
-            checked={useBurner}
-            onChange={(e) => setUseBurner(e.target.checked)}
+            type="radio"
+            name="signerMode"
+            checked={signerMode === "connected"}
+            onChange={() => setSignerMode("connected")}
           />{" "}
-          Use burner key for signing (bypasses connected wallet -- BSC only,
-          dev-only, see NEXT_PUBLIC_BSC_TESTNET_BURNER_PRIVATE_KEY)
+          Connected wallet (Robinhood/USDG works; BSC/Permit2 CANNOT --
+          no injected wallet implements eth_signTransaction)
+        </label>
+        <br />
+        <label>
+          <input
+            type="radio"
+            name="signerMode"
+            checked={signerMode === "burner"}
+            onChange={() => setSignerMode("burner")}
+          />{" "}
+          Dev burner key (BSC only, dev-only, see
+          NEXT_PUBLIC_BSC_TESTNET_BURNER_PRIVATE_KEY)
+        </label>
+        <br />
+        <label>
+          <input
+            type="radio"
+            name="signerMode"
+            checked={signerMode === "privy"}
+            onChange={() => setSignerMode("privy")}
+          />{" "}
+          Privy embedded wallet (BSC, real player-facing path)
         </label>
       </div>
       <div style={{ marginTop: 12 }}>
