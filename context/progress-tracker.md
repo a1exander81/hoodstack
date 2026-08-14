@@ -2,8 +2,23 @@
 
 ## Current Phase
 
-- **Most recent state (read this first; the longer bullet below
-  predates it).** Both deposit rails are verified end to end with real
+- **Most recent state (read this first; every bullet below predates
+  it).** The first game and the provably-fair mechanism both exist.
+  `src/app` is no longer `api/` + `dev/` only: an `(app)` route group
+  holds a session-gated Coinflip page (PR #12), running on
+  deliberately inert stubs -- a fixed balance that never decrements,
+  bare `Math.random()`, and a permanent on-page banner saying exactly
+  that. `services/rng` is built, merged (PR #13), and migrated to BOTH
+  databases: seed-pair commit/reveal, verified by 22 checks against
+  real Postgres, including three rounds re-deriving to their exact
+  reservation-time floats from a seed whose hash was published before
+  any of them. Nothing connects the two yet -- no route calls
+  `reserveRound`, no `GameRound` row is ever written, and no balance
+  moves. That join is the wager path, and it is the first change to
+  touch `services/rng` and `services/ledger` together, which is
+  precisely why it did not ship alongside either.
+
+- **Prior state, superseded by the bullet above.** Both deposit rails are verified end to end with real
   player-facing signers. The remaining deposit-flow work is UX, not
   mechanism: Privy's confirmation modals are now suppressed per-call
   (`uiOptions.showWalletUIs: false`) rather than app-wide, with the
@@ -69,6 +84,15 @@
 
 ## Current Goal
 
+- **The next unit is the wager path**: a route that reserves a round
+  via `services/rng`, debits the wager and credits the payout through
+  `services/ledger`, writes the `GameRound` row, and returns the
+  commitment to the client. It replaces `dev-stubs.ts` entirely and
+  deletes the simulated-round banner. Two protected paths in one
+  change, so branch -> PR -> CodeRabbit without exception. Blocked on
+  nothing technical; the open decision it needs is the per-game house
+  edge (see Open Questions).
+
 - The `erc20ApprovalGasSponsoring` gap flagged at the top of this
   file is now closed: a genuinely fresh burner (verified at 0 BNB, 0
   MockUSDT, 0 Permit2 allowance beforehand) completed a real BSC
@@ -130,6 +154,128 @@
   custody question.
 
 ## Completed
+
+- **Context files corrected to describe the real stack: plain
+  Tailwind, no component library** (`135234e`, direct to `main`).
+  `architecture.md`, `ui-context.md`, and `code-standards.md` had all
+  documented HeroUI as the component library since the project's first
+  day; `package.json` has never contained `@heroui/*`, `src/components`
+  held exactly one hand-written file, and both the login page and the
+  landing mockup were built without it. `ui-context.md`'s Colors table
+  also listed CSS custom properties (`--bg-base`) when the tokens are
+  really `theme.extend.colors` keys in `tailwind.config.ts` consumed as
+  `bg-bg-base` -- and `code-standards.md`'s styling rule pointed at the
+  wrong mechanism to match. A fourth HeroUI reference sat in this
+  file's own Next Up item 7, telling a future session to port the
+  mockup "against HeroUI"; that was the one most likely to be acted on.
+  Also added `state-error`/`state-success` to `tailwind.config.ts`,
+  which `ui-context.md` had documented but the config never defined.
+  Decision recorded rather than inherited: adding a component library
+  later is fine, but as a deliberate choice on its own merits.
+
+- **Coinflip UI built and merged** (PR #12, `feat/coinflip-ui`,
+  squash-merged as `2a9c906`). Nine new files: an `(app)` route group
+  with a session-gated layout, the game page, and four client
+  components under `src/components/games/coinflip/`. First
+  player-facing surface in the repo beyond the login page --
+  `src/app` had held only `api/` and `dev/` for the project's entire
+  life. Confirmed in the build's route table as `/games/coinflip`,
+  static, 2.55 kB / 106 kB First Load (versus `/` at 882 kB, since
+  nothing here pulls in the full wallet surface).
+  - **Everything money-shaped is deliberately inert**, in one file
+    (`dev-stubs.ts`) whose header says so. The table balance is fixed
+    and never decrements -- a stub that debited on a loss would be
+    indistinguishable from a working ledger at a glance, which is the
+    exact thing invariant 1 exists to prevent. `resolveRound()` is
+    bare `Math.random()` with no commitment. A permanent
+    `state-error` banner on the page says "Simulated round · no seed
+    commitment · no balance movement", chosen over a dev-only console
+    warning specifically so it appears in any screenshot.
+  - **`SessionGate` is a UX gate, not a security boundary**, and says
+    so in its own docstring. Privy's hooks are client-only so it
+    cannot run server-side; real enforcement stays in the route
+    handlers, as `services/settlement`'s `verifyAccessToken` already
+    does.
+  - **Root-caused a real build config bug rather than working around
+    it**: `tsconfig.json` was still on the Next scaffold's default
+    `target: "ES2017"`, so every BigInt literal (`1_000_000n`) was a
+    type error. Session Notes (cont. 4) logged this same error during
+    the `services/ledger` build; it had been resolved then by writing
+    `BigInt(0)` calls instead of fixing the target -- a workaround
+    `code-standards.md` explicitly forbids layering. Now `ES2020`.
+    The existing `BigInt(...)` calls in `services/ledger` and
+    `services/settlement` were deliberately left alone: they are
+    correct, and rewriting them means a PR on a protected path for
+    zero functional gain.
+  - **The payout multiplier is an invention, flagged as one.**
+    `PAYOUT_BPS = 19_800n` (1.98x, 1% house edge) is a placeholder
+    chosen to be visibly not-2.00x. No context file specifies a house
+    edge for any game. Raised in Open Questions rather than left to
+    harden into an accidental decision.
+
+- **`services/rng` built, merged, and verified end to end** (PR #13,
+  `feat/rng-commit-reveal`, squash-merged as `8e33feb`). Seed-pair
+  commit/reveal: one server seed covers many rounds via an
+  incrementing nonce, its SHA-256 hash published before any bet, the
+  raw seed revealed only on rotation.
+  - **Two invariants amended together, not one.** `architecture.md`
+    invariant 2 was rewritten for the seed-pair model -- but invariant
+    1 independently required "a settled game round with a revealed
+    seed" before any balance mutation, which seed pairs cannot satisfy
+    (reveal happens at rotation, after settlement). Amending only
+    invariant 2 would have left the architecture forbidding every
+    payout. Invariant 1 now reads "a published seed commitment", with
+    the reason written inline.
+  - **Model chosen deliberately, not defaulted into.** Per-round
+    reveal satisfies a stricter reading of invariant 2 but makes the
+    player's client seed inert, leaving nothing for
+    `project-overview.md`'s Settings client-seed feature to manage.
+    Seed pairs are also what existing third-party provably-fair
+    verifiers implement, so players can check rounds with tools we did
+    not write.
+  - **A delimiter collision was found and closed before it shipped.**
+    Deriving from `${clientSeed}:${nonce}` means a player-set client
+    seed of `abc:1` at nonce 2 produces the same HMAC message as seed
+    `abc` at nonce `1:2` -- two distinct rounds, identical
+    derivations, with the colliding input entirely player-controlled.
+    `:` is now rejected at the zod boundary and again inside
+    `isValidClientSeed`, so the primitive is safe standalone.
+  - **The nonce counter is an atomic `UPDATE ... RETURNING`**, not a
+    read-then-write and deliberately not `COUNT(rounds) + 1`. Two
+    concurrent bets would otherwise both read nonce N and derive
+    identical outcomes. A count-based nonce silently reuses numbers
+    whenever a round fails between reservation and insert, and looks
+    correct in every test where nothing fails. A GAP in the sequence
+    is harmless -- the skipped nonce is still derivable from the
+    revealed seed, so a player can confirm nothing was hidden. A
+    REUSED nonce is not recoverable. Same reasoning as the ledger's
+    DB-level `txHash` idempotency.
+  - **The partial unique index is hand-written SQL.** "At most one
+    active seed pair per user" is `CREATE UNIQUE INDEX ... ON
+    "SeedPair"("userId") WHERE "revealedAt" IS NULL` -- not
+    expressible in Prisma schema syntax, so it was appended to the
+    generated migration by hand after `migrate dev --create-only`. If
+    that migration is ever regenerated the index disappears silently,
+    and "which pair was this round under" stops having one answer.
+    There is no `active` boolean: `revealedAt IS NULL` IS active, so a
+    row cannot contradict itself.
+  - **Verified against real Postgres, 22 checks, not from a type
+    check.** A disposable `scripts/verify-rng.ts` (deleted after use,
+    and refusing to run if `DATABASE_URL` pointed anywhere but local)
+    proved: the commitment object has no `serverSeed` key; repeat
+    calls return the same pair; `:` is rejected; three reservations
+    yield nonces 1,2,3 with distinct floats in [0,1); `setClientSeed`
+    is refused once nonce > 0; rotation reveals a seed whose hash
+    matches the PRE-BET commitment; all three rounds re-derive to
+    their exact reservation-time floats; the revealed pair is frozen
+    at nonce 3; and exactly one active pair remains. The derivation
+    itself was separately checked over 200,000 draws -- 0.49939 heads,
+    strictly within [0,1).
+  - **Migrated to BOTH databases.** `migrate dev` on `hoodstack_dev`,
+    `migrate deploy` on Neon, with `SeedPair_userId_active_key`
+    confirmed present in production via `pg_indexes` -- proof the
+    hand-written SQL survived, rather than trusting the command's
+    success line.
 
 - **Wallet skeleton — verified end to end locally.** Next.js 15 +
   Privy + wagmi/viem. Email and Google login both working; embedded
@@ -981,7 +1127,37 @@
       player-facing deposit UI at all. This is a hard prerequisite
       before headless signing reaches a player, not a nice-to-have.
 
+12. **The wager path** -- the next unit, and the first change to
+    touch `services/rng` and `services/ledger` in one go. Reserve a
+    round, debit the wager, settle, credit any payout, write the
+    `GameRound` row, return the commitment. Deletes `dev-stubs.ts`
+    and the simulated-round banner. Needs the house-edge decision
+    (Open Questions) before the payout arithmetic is real. Branch ->
+    PR -> CodeRabbit, no exception.
+
+13. **Vercel Preview is missing `DATABASE_URL`.** Production has both
+    `DATABASE_URL` and `DIRECT_URL` freshly set; Preview has only
+    `DIRECT_URL` (from ~2 days prior). `vercel env add <name> preview`
+    cannot be driven by stdin at all -- see Session Notes (cont. 14) --
+    so this one needs the Vercel web dashboard. Nothing depends on
+    Preview deployments today, which is why it was left.
+
 ## Open Questions
+
+- **What is the house edge, per game?** `PAYOUT_BPS = 19_800n` (1.98x)
+  currently sits in `dev-stubs.ts` as an invented placeholder chosen
+  to be visibly not-2.00x. No context file specifies an edge for any
+  game. It is almost certainly not one constant across all four --
+  Coinflip, Crash, Mines and Roulette normally carry their own -- so a
+  single shared value now becomes four wrong values later. Must be a
+  recorded decision before the wager path debits anything real.
+- **Who has read access to the production database, and does that need
+  restricting?** Server seeds sit in Postgres in plaintext until
+  reveal, so read access to Neon is equivalent to knowing every
+  unsettled round's outcome. This is inherent to the design -- the app
+  must hold the seed to compute outcomes -- but it makes DB access an
+  operational control, not just an infrastructure detail. Noted in
+  `architecture.md` invariant 2 as well.
 
 - Which jurisdictions will Chipstack operate in at launch, and what
   license or registration does that require in each? Blocks go-live,
@@ -1735,3 +1911,68 @@ degrades. Reject any provider that cannot satisfy this.
   (`sendTransactions` absent), not in the browser. Same shape as
   cont. 12's byte-identical-result lesson: when a result looks clean,
   check that the mechanism under test actually executed.
+
+## Session Notes (cont. 14)
+
+- **A stale `tsconfig.tsbuildinfo` made a correct fix look like a
+  no-op.** Changing `target` to `ES2020` produced byte-identical
+  errors on the next `tsc --noEmit`. `--showConfig` confirmed the
+  config genuinely resolved to `es2020`, so the file was right and the
+  OBSERVATION was stale: `incremental: true` had cached the previous
+  run's diagnostics. `rm -f tsconfig.tsbuildinfo` and it passed
+  immediately. This is a new shape of an old trap -- cont. 12's rule
+  says a byte-identical result is evidence about the experiment, and
+  here the experiment was fine while the measurement was cached.
+  Standing habit: after any `tsconfig.json` change, delete
+  `tsconfig.tsbuildinfo` before trusting a `tsc` result.
+
+- **`vercel env add <name> preview` cannot be driven by stdin at all**
+  -- stronger than the "not reliable" note from an earlier session,
+  and now understood. It asks TWO questions (value, then Git branch)
+  but reads the ENTIRE stdin as the value: piping the string alone
+  leaves the branch prompt unanswered and the command exits without
+  adding anything, while piping the string plus a newline fails with
+  "Value contains newlines". Interactive paste into the masked prompt
+  also failed repeatedly, and selecting the "Leave as is" recovery
+  option silently added the variable with an EMPTY value while
+  printing a green checkmark. Production has one prompt and works fine
+  via stdin. For Preview, use the web dashboard -- there is no working
+  CLI path.
+
+- **A placeholder was pasted verbatim into a real write, again, and
+  this time it reached production.** A command that wrote a
+  placeholder to a temp file and uploaded it to Vercel in one chained
+  line put the literal string `PUT_POOLED_STRING_INSIDE_THESE_QUOTES`
+  into production's `DATABASE_URL`. The byte-count check that would
+  have caught it (`wc -c` showing 37 instead of ~200) was in the same
+  chain, printing after the damage. The lesson is not "label
+  placeholders better" -- that has been logged twice already (cont. 7,
+  cont. 9) and did not work. It is that a value-writing step and the
+  step that CONSUMES that value must be separate commands, so the
+  verification between them can actually gate the second one.
+
+- **Credential handling burned most of an hour and produced no
+  rotation.** A connection string printed to the terminal was pasted
+  into chat; the CLI command suggested to rotate it
+  (`neon roles reset-password`) does not exist -- `neon roles` offers
+  only list/create/delete. Suggesting an unverified subcommand is the
+  same failure the project's standing rule already covers for SDK
+  methods (a plausible-sounding name is not evidence it exists), and
+  it applies to CLIs too. What worked in the end: redirect the string
+  to a file, strip the trailing newline with `printf '%s'`, and feed
+  the file to stdin, so the value never renders. General pattern for
+  this project: paste RESULTS -- migration names, index names, row
+  counts, error text -- never credentials; if output might contain
+  one, redirect and send a byte count instead.
+
+- **zsh glob expansion killed two diagnostic commands and both looked
+  like findings.** `grep --include=*.ts` failed with "no matches
+  found" because zsh expanded the flag's value before grep saw it, and
+  `ls -la *.tsbuildinfo .next/*.tsbuildinfo` aborted the WHOLE command
+  when one of the two globs matched nothing -- so the buildinfo check
+  never ran and its absence was briefly read as evidence. Quote any
+  glob passed as a flag value. This is the fourth distinct variant of
+  the same underlying problem (after line continuations, heredocs, and
+  `<placeholder>` syntax), so per closing ritual #5 it is promoted to
+  the standing rule in `ai-workflow-rules.md` rather than logged again
+  here.
