@@ -45,6 +45,35 @@ Do not modify the following unless explicitly instructed:
 - Generated UI library components (`components/ui/*`)
 - Any third-party library internals
 
+## Choosing a Git Path
+
+Decide by rule, not per session. This has been re-litigated three times
+on money-adjacent code and gone direct to `main` each time, which means
+asking again is not producing a different answer -- it is just producing
+the same answer more slowly.
+
+**Branch -> PR -> CodeRabbit, without exception:**
+
+- `services/ledger/*`, `services/rng/*`
+- Anything that spends from the facilitator's gas wallet, moves user
+  funds, or changes how a settlement is verified or credited
+- Anything touching `HOUSE_TREASURY_ADDRESS` or treasury key handling
+
+**Direct to `main` is correct for:**
+
+- Docs and context files
+- `/dev/*` harness code -- it has no player-facing surface and cannot
+  move funds on a real user's behalf. This is the standing exemption
+  that tonight's `page.tsx` commit relied on; it is written down here
+  so it is a rule rather than a defensible exception each time.
+- Genuine active-incident hotfixes (rare, and logged as one-offs)
+
+When something sits between these -- dev-only code that nonetheless
+changes a signing path used by real settlements, which is exactly what
+tonight's change was -- take the branch. The cost is about ninety
+seconds and the alternative is discovering the pattern only by counting
+occurrences after the fact.
+
 ## Editing Existing Files
 
 Before building any anchored replacement (or any find-and-replace) for

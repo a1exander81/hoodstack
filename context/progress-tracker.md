@@ -2,6 +2,21 @@
 
 ## Current Phase
 
+- **Most recent state (read this first; the longer bullet below
+  predates it).** Both deposit rails are verified end to end with real
+  player-facing signers. The remaining deposit-flow work is UX, not
+  mechanism: Privy's confirmation modals are now suppressed per-call
+  (`uiOptions.showWalletUIs: false`) rather than app-wide, with the
+  Permit2 witness signature proven headless by a real settled deposit
+  at zero modals and the ERC-20 approval prompt still untested (that
+  leg never ran -- allowance already `maxUint256`). Headless signing
+  has no app-level confirmation in front of it and cannot have one
+  yet: there is no player-facing deposit UI at all. `src/app` still
+  holds only `api/` and `dev/`. The largest unstarted chunk of the
+  whole product remains the games -- Coinflip, Crash, Mines, Roulette
+  are still at zero code, and the deposit rail is no longer a
+  technical reason for that.
+
 - Build stage -- wallet layer, x402 deposit route, self-hosted
   facilitator, and `services/ledger` (deposit-credit only, PR #5
   merged) are all built and verified end to end: a real signed deposit
