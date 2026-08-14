@@ -27,9 +27,23 @@
   the sponsorship itself independently confirmed via the burner's
   on-chain nonce (0 -> 1), remaining native BNB, and Permit2 allowance
   (0 -> `maxUint256`) -- none reachable unless the facilitator
-  genuinely topped up a zero-balance wallet first. The player-facing
-  signer gap is unchanged: this still only runs via the dev-only
-  burner. A
+  genuinely topped up a zero-balance wallet first. **The player-facing signer question is now
+  answered, and the answer is structural**: `eth_signTransaction` is
+  refused by every injected browser wallet as a matter of policy, not
+  as a Rabby quirk -- MetaMask closed it won't-fix
+  (metamask-extension#3475) and other wallet implementers explicitly
+  track it as "MetaMask refuse to add, we should follow them." No
+  injected wallet will ever complete the Permit2 approval leg, so BYOW
+  on BSC is permanently off this rail and needs either a
+  pre-fund-then-`eth_sendTransaction` design or explicit exclusion.
+  Privy EMBEDDED wallets DO sign raw transactions (through Privy's own
+  RPC, not an injected provider -- confirmed by reading the compiled
+  `@privy-io/react-auth` source), and an embedded wallet
+  (`0xEC11f1Cb1B8c5EE82E99019B1a0Bd2A302ce5077`) already exists on the
+  canonical DID. A signer for it is built and drives BOTH signature
+  prompts to completion, but the deposit still does not settle: the
+  facilitator computes a nonsensical `requiredWei` from the resulting
+  approval and refuses to sponsor (see Current Goal). A
   landing/lobby mockup exists (not yet ported into real components) and
   the chat feature is fully architected with two decisions locked, but
   neither is built.
@@ -45,20 +59,48 @@
   response (see Completed). What's still a real, unresolved gap: no
   browser wallet tested can complete the BSC approval leg, so the
   Permit2 rail currently has no viable player-facing signer at all --
-  only the dev-only burner. That is a product-level blocker for BSC,
-  not a test-harness detail, and needs its own investigation (Rabby's
-  `eth_signTransaction` behavior, or an alternative approval flow).
+  only the dev-only burner. **That investigation happened this
+  session and produced a real answer** (see Completed): no injected
+  wallet can ever do this, and Privy embedded wallets can. The
+  embedded signer is built, type-checks clean, and produces both the
+  Permit2 witness signature and the ERC-20 approval signature through
+  Privy's UI.
+
+- **THE ONE REMAINING BLOCKER, and the next session's first action.**
+  The Privy-signed approval reaches the facilitator, which then
+  rejects it:
+  `invalid_exact_evm_transaction_failed: Sponsored approval requires
+  1364295155615108800000000 wei, exceeding the 3000000000000000 wei
+  hard cap -- refusing to sponsor`. That figure (1.36e24) is
+  ~4.5e8 times a correct approval cost (55,000 gas x 100,000,000 wei
+  = 5.5e12), so `gasLimit x maxFeePerGas` is being computed from at
+  least one fee-magnitude value sitting in the wrong field. Sending
+  BOTH `gas` and `gasLimit` as hex was tried and changed the figure
+  NOT AT ALL -- byte-identical error -- which falsifies the
+  field-name hypothesis and means the value originates inside Privy's
+  signing path, not in our adapter's arguments.
+  **Do not patch the adapter again before adding logging.**
+  `facilitator/index.ts`'s `sendTransactions` currently logs nothing
+  about the decoded transaction (a gap already flagged in Completed
+  last session). One log line printing the decoded `gas`,
+  `maxFeePerGas`, and the computed `requiredWei` converts this from
+  guesswork into a two-minute read. Four adapter patches were spent
+  this session guessing at boundaries instead of reading them; this
+  is the correction.
   Now that sponsorship is proven to genuinely spend the gas wallet's
   real BNB, the missing rate limit / auth gate on that top-up matters
   more than it did as a theoretical risk -- anyone who can produce a
   validly-signed MockUSDT approval can trigger a real spend today.
-  Separately, a live discrepancy surfaced this session: the x402
-  client submitted a signed payload for Robinhood Chain
-  (`eip155:46630`) despite the connected wallet reporting BSC
-  (`eip155:97`) throughout, contradicting a prior session's claim that
-  `networks: [eip155:${chain.id}]` fully scopes client-side selection
-  to the connected chain -- worth its own investigation (see Session
-  Notes). Otherwise: the older candidates still stand -- port the
+  **RESOLVED: the 46630-vs-97 discrepancy.** Root cause was
+  a signer/chain coupling bug in `/dev/x402-test`, not a flaw in the
+  `networks` scoping itself: `networks` was derived from wagmi's
+  connected `chain` even when the offline burner signed, and fell back
+  to `undefined` -- which registers an `eip155:*` wildcard and makes
+  `selectPaymentRequirements` take `accepts[0]`, always
+  Robinhood/46630. Fixed by deriving the network from the chosen
+  signer. Verified against a real facilitator log: every `/verify` in
+  the run carried `network: 'eip155:97'`, with no 46630 attempt at
+  all, versus the prior session's first-attempt-then-fall-through. Otherwise: the older candidates still stand -- port the
   landing/lobby mockup into real `src/app/(marketing)` components, get
   a domain in front of the VPS, and settle the real house treasury
   custody question.
@@ -637,6 +679,99 @@
     Worth adding explicit logging so this is observable without a
     manual verification round-trip next time.
 
+- **`eth_signTransaction` confirmed unavailable across the entire
+  browser-wallet ecosystem -- not a Rabby bug.** Prior sessions logged
+  Rabby's rejection as an unexplained quirk worth working around. It
+  is policy: MetaMask closed the request won't-fix
+  (metamask-extension#3475), and a third-party wallet's own
+  method-support matrix lists the method with the note that MetaMask
+  refuses to add it and they should follow suit. There is no browser
+  wallet to switch to. This closes the "investigate Rabby's
+  behavior" item as answered rather than pending, and makes BYOW-on-BSC
+  a design decision (pre-fund + `eth_sendTransaction`, or exclusion)
+  rather than a bug to fix.
+
+- **Privy embedded wallets proven able to sign raw transactions**, by
+  reading the compiled `@privy-io/react-auth` source rather than its
+  types. Two internal paths, both real: the TEE/unified path calls
+  Privy's RPC with `method: "eth_signTransaction"` and returns
+  `signed_transaction`; the on-device path goes through
+  `walletProxy.rpc({ request: { method: "eth_signTransaction" }})`.
+  Neither touches an injected provider. The SAME source also confirms
+  Privy simply FORWARDS `eth_signTransaction` to the injected provider
+  for externally-connected wallets -- so Privy is no workaround for
+  Rabby/MetaMask, and the embedded path is the only viable one.
+
+- **Embedded wallet confirmed present on the canonical DID.**
+  `useWallets()` reports both
+  `rabby_wallet/injected 0xc2413696...` and
+  `privy/embedded 0xEC11f1Cb1B8c5EE82E99019B1a0Bd2A302ce5077`. This
+  mattered because `createOnLogin` is `"users-without-wallets"`, which
+  skips provisioning for any DID that already linked an external
+  wallet -- so no `createOnLogin` change is needed after all. Nothing
+  in `src/` referenced `useWallets` or `walletClientType` before this
+  session; the wallet debug panel is wagmi-only and cannot distinguish
+  embedded from injected.
+
+- **Privy embedded signer built** (`privyToClientSigner` in
+  `/dev/x402-test`), alongside a three-way signer mode (connected /
+  burner / Privy embedded) replacing the old burner checkbox. It
+  drives BOTH Privy prompts to completion -- the Permit2 witness
+  `signTypedData` and the ERC-20 approval `signTransaction` -- with a
+  correct-on-inspection payload (Permit2 domain matching the
+  on-chain-verified one, `spender` = the `x402ExactPermit2Proxy`,
+  `witness.to` = the test treasury). Three real boundary hazards found
+  and handled along the way, none visible to `tsc`:
+  - **BigInt on the transaction path.** Privy's on-device wallet proxy
+    JSON-serializes its request and `JSON.stringify` throws on BigInt;
+    `@x402/evm` supplies bigints for `gas`/`maxFeePerGas`/
+    `maxPriorityFeePerGas`. Hex-encoded at the adapter. The dev burner
+    never hit this because `privateKeyToAccount` signs locally in
+    viem, which takes bigints natively.
+  - **BigInt on the typed-data path.** Same proxy, separate crossing --
+    fixing only the transaction path left the crash identical. The
+    Permit2 witness message carries bigints in `permitted.amount`,
+    `nonce`, `deadline`, `validAfter`. Fixed with a recursive
+    normalizer (EIP-712 numerics are valid as decimal strings) rather
+    than field-by-field, after field-by-field had already missed some.
+  - **`gasLimit` is NOT read by the on-device path.** Privy's TEE
+    branch resolves `gas_limit: gasLimit ?? gas` and
+    `gas_price: gasPrice ?? gas` (the latter would submit a gas LIMIT
+    as a gas PRICE if `gas` leaked through); the on-device branch
+    forwards the request object untouched and does neither. Sending
+    both `gas` and `gasLimit` as hex produced a byte-identical
+    facilitator error, so the bad gas value does NOT originate in our
+    arguments. Unresolved -- see Current Goal.
+
+- **`networks` scoping bug fixed and verified** (see Current Goal for
+  the root cause). Confirmed against a real facilitator log showing
+  every `/verify` on `eip155:97` with no 46630 attempt.
+
+- **Opaque x402 failures are now readable.** An empty-body 402 with
+  zero facilitator traffic had twice been diagnosed as "no server-side
+  log at all." It was never silent: `processHTTPRequest` calls
+  `createPaymentRequiredResponse(..., invalidReason, ...)` and the
+  result travels in a RESPONSE HEADER, not the JSON body. The header is
+  `payment-response` (base64 JSON), NOT `PAYMENT-REQUIRED` -- guessing
+  the name cost a round-trip. `/dev/x402-test` now dumps every response
+  header with its value and decodes the challenge, which is what
+  finally surfaced the real error after several blind hypotheses.
+
+- **`MAX_GAS_TOPUP_WEI` checked directly against a measured gas
+  price**, closing the sub-question Next Up item 2 tracked. Value is
+  `3_000_000_000_000_000` wei (0.003 BNB) at `facilitator/index.ts:132`;
+  BSC Testnet gas price re-measured this session at 100,000,000 wei
+  (0.1 gwei, unchanged from last session). A correct approval costs
+  55,000 x 1e8 = 5.5e12 wei, giving ~545x headroom -- the cap would
+  only bind above ~54 gwei. NOTE: an earlier session note recorded this
+  cost as ~5.5e9 wei, which was wrong by 1000x. The cap is not a
+  reliability risk; it is purely a spend-exposure question.
+
+- **`src/app/(marketing)` confirmed NOT to exist**, running the check
+  flagged three sessions running. `src/app` contains only `api/` and
+  `dev/` -- no `(marketing)`, no `(app)`, no `games/`. The mockup port
+  is greenfield with no layout to reconcile.
+
 ## In Progress
 
 - None
@@ -657,13 +792,11 @@
    (`0x3D02658E7eaB834875a0765D8CeC566b2eDc5ceA`) is a confirmed real
    spend today, and today anyone who can produce a validly-signed
    MockUSDT approval can trigger a top-up to any address -- unsafe for
-   anything beyond isolated testnet use as-is. `MAX_GAS_TOPUP_WEI`
-   itself still hasn't been directly read and compared against a
-   measured gas price (the real BSC Testnet gas price was measured
-   this session at 100,000,000 wei, and the sponsored approval
-   succeeded without under-funding in that one live test, but the
-   constant's actual value was never pulled from `facilitator/index.ts`
-   and checked against it directly).
+   anything beyond isolated testnet use as-is. RESOLVED sub-question: `MAX_GAS_TOPUP_WEI` has
+   now been read directly (`3_000_000_000_000_000` wei, 0.003 BNB) and
+   compared against a re-measured 100,000,000 wei gas price -- ~545x
+   headroom, not a reliability risk (see Completed). What remains here
+   is purely the auth/rate-limit exposure, unchanged.
 3. Decide: keep or strip the temporary `[http]` request logger in
    `facilitator/index.ts` -- now merged to `main` as-is; still an open
    decision, not blocking anything.
@@ -678,9 +811,9 @@
 6. Port the reference repo's Coinflip UI onto the wallet layer.
 7. Port the landing/lobby mockup (`hoodstack-landing-mockup.html`)
    into real `src/app/(marketing)` components against HeroUI --
-   still gated behind `find src/app -maxdepth 2 -type d` to confirm
-   whether `(marketing)` already exists and what the root layout
-   looks like, flagged three sessions ago and still never run.
+   no longer gated: the check was finally run this session and
+   `(marketing)` does NOT exist (see Completed), so this is greenfield
+   directory creation with no existing layout to reconcile.
 8. Deploy the facilitator (committed and pullable from git) -- and
    later Socket.io (game state and the newly architected chat
    feature) -- to the VPS. Needs a domain or `sslip.io` wildcard DNS
@@ -695,6 +828,22 @@
    (like the wallet-address-to-DID lookup) are needed in
    production -- currently local-only in `.env.local`, correctly
    excluded from git.
+10. **HIGHEST PRIORITY -- do this before touching the Privy adapter
+    again.** Add decoded-transaction logging to `sendTransactions` in
+    `facilitator/index.ts`: print the decoded `gas`, `maxFeePerGas`,
+    and the computed `requiredWei` before the `MAX_GAS_TOPUP_WEI`
+    comparison. The Privy-signed approval currently yields a
+    `requiredWei` of 1.36e24 (~4.5e8 x too high) and there is no way to
+    see which field is wrong without this. Subsumes the
+    logging gap already noted at the end of the sponsorship entry in
+    Completed.
+11. Decide `showWalletUIs`. It is currently unset in
+    `app-providers.tsx`, so it defaults to true and Privy shows a
+    confirmation modal for BOTH the witness signature and the approval
+    -- two extra prompts mid-deposit, one of which the player never
+    initiated. Headless signing requires setting it explicitly to
+    false. This is a real player-facing UX decision, not a dev-harness
+    detail.
 
 ## Open Questions
 
@@ -1280,3 +1429,54 @@ degrades. Reject any provider that cannot satisfy this.
   affected -- but worth recognizing this error shape immediately as a
   paste-history artifact rather than a real failure, so it doesn't
   cost a diagnostic round-trip next time it happens.
+
+## Session Notes (cont. 11)
+
+- **An opaque error response usually is not opaque -- something is
+  carrying the reason and nothing is reading it.** The empty-body 402
+  had been treated across two sessions as a failure with "no
+  server-side log at all." The reason was in the `payment-response`
+  response header the whole time, base64-encoded, one `atob` away.
+  Several hypotheses were burned reasoning about what MIGHT have
+  failed before anyone read what the server actually SAID. Standing
+  habit for this project: when a response is unhelpfully empty, dump
+  every header with its value before theorizing. Guessing the header
+  name (`PAYMENT-REQUIRED`) also cost a round-trip -- dump them all,
+  do not guess one.
+
+- **Four adapter patches were spent guessing at a boundary instead of
+  instrumenting it.** The BigInt crash was fixed on the transaction
+  path, then re-diagnosed on the typed-data path, then the gas field
+  name was guessed twice. Each patch was anchor-verified and safe, but
+  the sequence was avoidable: the facilitator sits on the other side of
+  the boundary and logs nothing about what it decodes. Adding that log
+  line first would have answered in one round-trip what four did not.
+  This is the same lesson as "read the compiled source, do not trust
+  the type signature," applied to runtime values rather than APIs:
+  instrument the boundary before patching across it.
+
+- **`&&` between a `grep` and follow-up commands makes "no matches"
+  indistinguishable from "the rest never ran."** A discovery command
+  chained with `&&` produced empty output that read as a broken
+  command; `grep` had simply exited non-zero on zero matches and
+  short-circuited the rest. Use `;` when later commands are not
+  conditional on the grep succeeding. Same family as the
+  paste-history artifact in cont. 10 -- a benign non-result that looks
+  like a failure.
+
+- **A read-only ledger query burned five attempts and was abandoned.**
+  Checking which DID received the BSC deposits failed on: `tsx -e`
+  having no directory to resolve relative imports against, `tsx` not
+  reading `tsconfig` path aliases, `dotenv-cli` not being installed,
+  `export $(...)` dumping the entire environment, and finally a guess
+  at the generated Prisma client's location that was never verified
+  (`src/generated/prisma` is gitignored and may not exist until
+  `postinstall` runs). Correct move would have been to verify the
+  client path FIRST. The DID-split question is unchanged and remains in
+  Open Questions.
+
+- **Privy renders a full EIP-712 payload in its signing modal**, which
+  made it possible to verify the Permit2 domain, spender, and witness
+  visually before signing. Useful diagnostic surface worth reaching for
+  again -- it confirmed the payload was correct while the failure was
+  downstream.
