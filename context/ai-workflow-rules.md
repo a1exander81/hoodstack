@@ -116,6 +116,35 @@ difference in the output, suspect the experiment before concluding
 anything about the system. Byte-identical results usually mean the two
 cases were never distinguishable at the boundary being tested.
 
+## Handing Over Commands in Chat
+
+A command handed over in chat has to survive a copy/paste into a real
+zsh session. Three separate constructs have now failed that trip, each
+costing a round-trip, so this is a standing rule rather than a habit:
+
+- **Single unbroken lines.** No backslash line continuations -- they
+  are dropped on paste, so zsh runs the first fragment alone and then
+  tries to execute the remaining flags as standalone commands. Prefer
+  one long line however unwieldy it looks.
+- **No heredocs.** A `python3 - <<'EOF'` block lost its opener on
+  paste; zsh treated the body as continuation lines and `EOF` closed
+  it, producing no output and no error -- the most expensive failure
+  shape, because it looks like the command ran and found nothing. Use
+  `python3 -c '...'` for inline scripts, or hand over a real file.
+- **Placeholders must be syntactically unrunnable, not just labeled.**
+  `BURNER=<paste the address>` was pasted verbatim and zsh read `<` as
+  a redirect. Use `0xYOUR_ADDRESS_HERE`. The same applies to
+  edit-first commands generally: if a command must be edited before
+  running, it needs to LOOK different from a runnable one, not just be
+  described as such in prose.
+
+Corollary for the far side: when a pasted command produces an odd local
+error, check whether it is a paste artifact before treating it as a
+real failure. Leftover fragments from an earlier block executing after
+a later one, a `grep` short-circuiting an `&&` chain on zero matches,
+and a diagnostic that simply ran before the action it was measuring
+have all been misread as system failures on this project.
+
 ## Keeping Docs in Sync
 
 Update the relevant context file whenever implementation changes:
