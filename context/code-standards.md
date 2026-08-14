@@ -31,8 +31,11 @@
 
 ## Styling
 
-- Use the CSS custom property tokens defined in `ui-context.md` — no
-  hardcoded hex values
+- Use the Tailwind color tokens defined in `tailwind.config.ts` and
+  mirrored in `ui-context.md` (`bg-surface`, `text-muted`,
+  `state-error`, ...) — no hardcoded hex values, and no raw Tailwind
+  palette colors either (`bg-slate-900`, `text-red-500`), since those
+  bypass the token scale without looking like they do
 - Follow the border radius scale defined in `ui-context.md`
 
 ## API Routes

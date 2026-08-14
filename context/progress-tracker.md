@@ -940,7 +940,7 @@
    not confirmed).
 6. Port the reference repo's Coinflip UI onto the wallet layer.
 7. Port the landing/lobby mockup (`hoodstack-landing-mockup.html`)
-   into real `src/app/(marketing)` components against HeroUI --
+   into real `src/app/(marketing)` components with plain Tailwind --
    no longer gated: the check was finally run this session and
    `(marketing)` does NOT exist (see Completed), so this is greenfield
    directory creation with no existing layout to reconcile.

@@ -12,6 +12,8 @@ export default {
         "text-muted": "#8B919A",
         "accent-primary": "#22C55E",
         "border-default": "#262B33",
+        "state-error": "#EF4444",
+        "state-success": "#22C55E",
       },
     },
   },

@@ -15,16 +15,26 @@ feel like a pressure page.
 
 Starting tokens — refine during the actual design pass.
 
-| Role | CSS Variable | Value |
+| Role | Tailwind token | Value |
 | --- | --- | --- |
-| Page background | `--bg-base` | `#0B0E11` |
-| Surface | `--bg-surface` | `#161A20` |
-| Primary text | `--text-primary` | `#F2F3F5` |
-| Muted text | `--text-muted` | `#8B919A` |
-| Primary accent ("chip green") | `--accent-primary` | `#22C55E` |
-| Border | `--border-default` | `#262B33` |
-| Error | `--state-error` | `#EF4444` |
-| Success | `--state-success` | `#22C55E` |
+| Page background | `bg-base` | `#0B0E11` |
+| Surface | `bg-surface` | `#161A20` |
+| Primary text | `text-primary` | `#F2F3F5` |
+| Muted text | `text-muted` | `#8B919A` |
+| Primary accent ("chip green") | `accent-primary` | `#22C55E` |
+| Border | `border-default` | `#262B33` |
+| Error | `state-error` | `#EF4444` |
+| Success | `state-success` | `#22C55E` |
+
+These are `theme.extend.colors` keys in `tailwind.config.ts`, not CSS
+custom properties. Apply them with the normal utility prefixes —
+`bg-bg-surface`, `text-text-muted`, `border-border-default`. This
+table and `tailwind.config.ts` are the same source of truth in two
+places and have drifted once already; change both together.
+
+`state-success` is deliberately identical to `accent-primary`. Keep
+them separate anyway so a later accent change doesn't silently
+recolor every win state.
 
 ## Typography
 
@@ -43,8 +53,16 @@ Starting tokens — refine during the actual design pass.
 
 ## Component Library
 
-HeroUI on top of Tailwind, matching the reference repo. Add new
-components via the HeroUI CLI rather than writing from scratch.
+None. Plain Tailwind utility classes, with hand-written components
+under `src/components/`, nested per feature area once a directory
+holds more than a couple of files (`src/components/games/coinflip/`).
+
+HeroUI was documented here from the project's first day and was never
+installed — the login page and the landing mockup were both built
+without it, so this section now records what the repo actually does.
+Adding a component library later is a real option, but it is a
+deliberate decision to make on its own merits, not something to
+inherit from the reference repo.
 
 ## Layout Patterns
 

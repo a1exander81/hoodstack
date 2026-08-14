@@ -5,7 +5,7 @@
 | Layer | Technology | Role |
 | --- | --- | --- |
 | Framework | Next.js 15 (App Router) | Full-stack app; server components for game/lobby pages, route handlers for wallet/x402/KYC endpoints |
-| UI | HeroUI + Tailwind CSS | Component library and styling — reused from the nkosresearch/web3-casino reference frontend |
+| UI | Tailwind CSS (no component library) | Hand-written components under `src/components/`. Color and radius tokens live in `tailwind.config.ts`, mirrored in `ui-context.md`. HeroUI was documented early but never installed — see `ui-context.md` |
 | Wallet / Web3 | Embedded wallet SDK (Privy) + wagmi + viem | Social-login embedded wallets and EVM chain interaction. **Replaces** the reference repo's Solana Wallet Adapter — Robinhood Chain and BSC are both EVM chains, so Solana tooling doesn't apply here |
 | Chains | Robinhood Chain (Arbitrum-based L2, mainnet since July 1, 2026) + BNB Smart Chain | Settlement chains. USDG is Robinhood Chain's native dollar asset; USDT is used on BSC |
 | Payments | x402 (HTTP-native payment protocol, now under the x402 Foundation) + Permit2 (Uniswap) | Gasless authorization from user wallet to house treasury — see `x402-payment-architecture.md` |
