@@ -148,7 +148,7 @@ cases were never distinguishable at the boundary being tested.
 ## Handing Over Commands in Chat
 
 A command handed over in chat has to survive a copy/paste into a real
-zsh session. Three separate constructs have now failed that trip, each
+zsh session. Four separate constructs have now failed that trip, each
 costing a round-trip, so this is a standing rule rather than a habit:
 
 - **Single unbroken lines.** No backslash line continuations -- they
@@ -166,6 +166,24 @@ costing a round-trip, so this is a standing rule rather than a habit:
   edit-first commands generally: if a command must be edited before
   running, it needs to LOOK different from a runnable one, not just be
   described as such in prose.
+- **Quote any glob passed as a flag value, and never chain two globs.**
+  `grep -rn "x" src/ --include=*.ts` dies with "no matches found"
+  because zsh expands the flag's VALUE before grep ever runs -- write
+  `--include="*.ts"`. Worse, a command listing two globs
+  (`ls -la *.a .next/*.b`) aborts ENTIRELY when either matches
+  nothing, so the check never executes and its silence reads as a
+  finding. Both happened tonight, and the second one briefly counted
+  as evidence in a diagnosis.
+- **A step that WRITES a value and the step that CONSUMES it must be
+  separate commands.** The bullet above says to make placeholders
+  unrunnable; that rule has now failed three times, most recently by
+  putting the literal string `PUT_POOLED_STRING_INSIDE_THESE_QUOTES`
+  into production's `DATABASE_URL` on Vercel. The byte-count check
+  that would have caught it sat in the same `;`-chained line and
+  printed AFTER the upload had already happened. Labeling is not the
+  control. The control is a gap: write the value, verify it (`wc -c`,
+  `grep -c`), and only then run the command that consumes it, as a
+  separate paste. A chain removes the operator's chance to stop.
 
 Corollary for the far side: when a pasted command produces an odd local
 error, check whether it is a paste artifact before treating it as a
