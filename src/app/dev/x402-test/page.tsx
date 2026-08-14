@@ -224,11 +224,25 @@ function privyToClientSigner(
       // as JS numbers and serialize fine.
       const hex = (v: bigint | undefined) =>
         v === undefined ? undefined : toHex(v);
+      // TRAP 4: the gas limit must NOT be pre-hex-encoded, even though
+      // the fee fields must be. Privy re-encodes the gas-limit field
+      // with viem's toHex, which on a STRING encodes its UTF-8 bytes
+      // instead of passing it through: "0x11170" (70000, the SDK's
+      // ERC20_APPROVE_GAS_LIMIT) became 0x30783131313730 =
+      // 13642951556151088, so requiredWei came out at 1.36e24 against a
+      // 3e15 cap. Confirmed by decoding the signed tx in the
+      // facilitator's sendTransactions log -- the ASCII of the bad
+      // value is literally the string we sent. The fee fields are
+      // forwarded untouched, which is why maxFeePerGas was always
+      // correct at 1e8 and only gas was poisoned. 70000 is far below
+      // 2^53, so a JS number is exact and JSON-serializable.
+      const num = (v: bigint | undefined) =>
+        v === undefined ? undefined : Number(v);
       const { signature } = await privySignTransaction(
         {
           ...rest,
-          gasLimit: hex(gas),
-          gas: hex(gas),
+          gasLimit: num(gas),
+          gas: num(gas),
           maxFeePerGas: hex(maxFeePerGas),
           maxPriorityFeePerGas: hex(maxPriorityFeePerGas),
         } as Parameters<PrivySignTransaction>[0],

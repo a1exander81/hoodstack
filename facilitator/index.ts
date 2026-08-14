@@ -160,6 +160,16 @@ function buildErc20ApprovalSponsorSigner(
         throw new Error("Sponsored approval transaction is missing gas or maxFeePerGas");
       }
       const requiredWei = parsed.gas * parsed.maxFeePerGas;
+      // Instrument the boundary before patching across it: print every
+      // decoded field, not just the two we multiply, so a wrong value can
+      // be located rather than guessed at from the resulting figure.
+      console.log(
+        "[erc20ApprovalGasSponsoring] decoded approval tx",
+        JSON.stringify(parsed, (_k, v) => (typeof v === "bigint" ? v.toString() : v), 2),
+      );
+      console.log(
+        `[erc20ApprovalGasSponsoring] gas=${parsed.gas} maxFeePerGas=${parsed.maxFeePerGas} requiredWei=${requiredWei} cap=${MAX_GAS_TOPUP_WEI}`,
+      );
       if (requiredWei > MAX_GAS_TOPUP_WEI) {
         throw new Error(
           `Sponsored approval requires ${requiredWei} wei, exceeding the ${MAX_GAS_TOPUP_WEI} wei hard cap -- refusing to sponsor`,

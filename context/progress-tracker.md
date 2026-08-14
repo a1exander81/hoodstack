@@ -40,10 +40,14 @@
   RPC, not an injected provider -- confirmed by reading the compiled
   `@privy-io/react-auth` source), and an embedded wallet
   (`0xEC11f1Cb1B8c5EE82E99019B1a0Bd2A302ce5077`) already exists on the
-  canonical DID. A signer for it is built and drives BOTH signature
-  prompts to completion, but the deposit still does not settle: the
-  facilitator computes a nonsensical `requiredWei` from the resulting
-  approval and refuses to sponsor (see Current Goal). A
+  canonical DID. **The BSC rail is now verified end to end with a real
+  player-facing signer.** The Privy embedded wallet completed a real
+  deposit (tx `0xc394003b...`, credited to
+  `did:privy:cmsmrt71l00a80ckz455i9ha2`), sponsored from a genuine zero
+  BNB balance. The facilitator's nonsensical `requiredWei` was
+  root-caused to a double-hex-encoding bug in our own adapter, not in
+  Privy's signing path (see Completed). Every BSC deposit before this
+  one rode the dev-only burner. A
   landing/lobby mockup exists (not yet ported into real components) and
   the chat feature is fully architected with two decisions locked, but
   neither is built.
@@ -66,27 +70,25 @@
   Permit2 witness signature and the ERC-20 approval signature through
   Privy's UI.
 
-- **THE ONE REMAINING BLOCKER, and the next session's first action.**
-  The Privy-signed approval reaches the facilitator, which then
-  rejects it:
-  `invalid_exact_evm_transaction_failed: Sponsored approval requires
-  1364295155615108800000000 wei, exceeding the 3000000000000000 wei
-  hard cap -- refusing to sponsor`. That figure (1.36e24) is
-  ~4.5e8 times a correct approval cost (55,000 gas x 100,000,000 wei
-  = 5.5e12), so `gasLimit x maxFeePerGas` is being computed from at
-  least one fee-magnitude value sitting in the wrong field. Sending
-  BOTH `gas` and `gasLimit` as hex was tried and changed the figure
-  NOT AT ALL -- byte-identical error -- which falsifies the
-  field-name hypothesis and means the value originates inside Privy's
-  signing path, not in our adapter's arguments.
-  **Do not patch the adapter again before adding logging.**
-  `facilitator/index.ts`'s `sendTransactions` currently logs nothing
-  about the decoded transaction (a gap already flagged in Completed
-  last session). One log line printing the decoded `gas`,
-  `maxFeePerGas`, and the computed `requiredWei` converts this from
-  guesswork into a two-minute read. Four adapter patches were spent
-  this session guessing at boundaries instead of reading them; this
-  is the correction.
+- **RESOLVED -- the `requiredWei` blocker is closed, and the BSC rail
+  now has a working player-facing signer.** Root cause was in our own
+  `privyToClientSigner`, not Privy: the gas limit was pre-hex-encoded
+  to the string `"0x11170"` (70000, the SDK's hardcoded
+  `ERC20_APPROVE_GAS_LIMIT`), and Privy re-encoded that STRING's UTF-8
+  bytes as hex, yielding `0x30783131313730` = 13642951556151088.
+  Multiplied by a perfectly correct `maxFeePerGas` of 1e8, that is
+  exactly the observed 1.36e24. Fixed by passing the gas limit as a
+  plain JS number while leaving the fee fields hex-encoded -- Privy
+  forwards those untouched, which is why they were always right.
+  Verified in the facilitator log (`gas=70000 maxFeePerGas=100000000
+  requiredWei=7000000000000`) and then by a settled deposit (see
+  Completed).
+  **Two claims previously recorded in this section were wrong**, and
+  are corrected here rather than deleted: the bad value did NOT
+  originate inside Privy's signing path, and the byte-identical result
+  from sending both `gas` and `gasLimit` did NOT falsify the adapter
+  hypothesis -- both fields were double-encoded identically, so that
+  experiment could never have distinguished them.
   Now that sponsorship is proven to genuinely spend the gas wallet's
   real BNB, the missing rate limit / auth gate on that top-up matters
   more than it did as a theoretical risk -- anyone who can produce a
@@ -772,6 +774,61 @@
   `dev/` -- no `(marketing)`, no `(app)`, no `games/`. The mockup port
   is greenfield with no layout to reconcile.
 
+- **BSC/Permit2 deposit completed by a real player-facing wallet --
+  the Privy embedded signer works end to end.** tx
+  `0xc394003bebe63be31d8e11102993d62995ea66b641f1efc458bacd0575f49311`
+  on BSC Testnet, 1.01 MockUSDT, payer
+  `0xEC11f1Cb1B8c5EE82E99019B1a0Bd2A302ce5077` (Privy embedded, on the
+  canonical DID) -> the disposable test treasury
+  `0x13864051772FDFBce895d21a483eee02edaeB445`. Every prior BSC deposit
+  rode the dev-only burner signer; this is the first that did not, so
+  the Permit2 rail now has a viable player-facing path for the first
+  time.
+  - **Root cause of the 1.36e24 `requiredWei`: double hex-encoding in
+    our own adapter, not Privy's internals.** `privyToClientSigner`
+    hex-encoded every bigint at the boundary (the TRAP 3 BigInt/JSON
+    fix from a prior session). For the fee fields that is correct --
+    Privy forwards them untouched. For the gas limit it is not: Privy
+    re-encodes that field with viem's `toHex`, which given a STRING
+    encodes its UTF-8 bytes instead of passing it through. So
+    `"0x11170"` became `0x30783131313730` = 13642951556151088 -- the
+    ASCII of the bad value is literally the string we sent. The
+    intended 70000 was read from the installed `@x402/evm@2.21.0`
+    compiled source (`signErc20ApprovalTransaction` passes
+    `gas: ERC20_APPROVE_GAS_LIMIT`), and the whole corruption was
+    reproduced against real viem in a sandbox before the fix was
+    written.
+  - **Fix:** the gas limit now passes as a plain JS number (70000 is
+    far below 2^53, so exact and JSON-serializable); fee fields
+    unchanged as hex. A one-line behavioral change, type-checked clean.
+  - **Decoded-transaction logging added to `sendTransactions`**
+    (`facilitator/index.ts`), closing Next Up item 10. Dumps every
+    decoded field via `JSON.stringify` with a bigint replacer, which
+    sidesteps viem's `TransactionSerializable` union entirely rather
+    than accessing fields that only exist on some transaction types.
+    This logging is what root-caused the bug, in one read.
+  - **Verified four independent ways, not from the 200.** (1)
+    Facilitator log: `gas=70000 maxFeePerGas=100000000
+    requiredWei=7000000000000`, then `result.success: true`. (2)
+    On-chain deltas on the embedded wallet: nonce 0 -> 1, Permit2
+    allowance 0 -> `maxUint256`, MockUSDT 5000000 -> 3990000. (3) `cast
+    receipt`: `status 1`, `from` = the facilitator gas wallet, `to` =
+    `0x402085c248EeA27D92E8b30b2C58ed07f9E20001`
+    (`x402ExactPermit2Proxy`), with a nested MockUSDT `Transfer` log of
+    `0xf6950` = 1,010,000 units. (4) The gas arithmetic reconciles
+    independently: top-up 7000000000000 wei minus leftover
+    2282000000000 = 4718000000000, implying exactly 47,180 gas used
+    against the 70,000 limit -- a figure unreachable unless the
+    facilitator genuinely funded a zero-balance wallet first. Ledger
+    credit confirmed via `psql hoodstack_dev`: matching `txHash`,
+    `amountMicroUsd` 1010000, `chainId` 97, DID
+    `did:privy:cmsmrt71l00a80ckz455i9ha2`.
+  - **One log in the run shows the fix landing mid-file**: the first
+    two `/settle` attempts carry `gas: "13642951556151088"` with an
+    identical signature (a cached pre-hot-reload signed tx), and the
+    third carries a fresh signature with `gas: "70000"`. Useful as a
+    self-contained before/after if this is ever revisited.
+
 ## In Progress
 
 - None
@@ -828,15 +885,13 @@
    (like the wallet-address-to-DID lookup) are needed in
    production -- currently local-only in `.env.local`, correctly
    excluded from git.
-10. **HIGHEST PRIORITY -- do this before touching the Privy adapter
-    again.** Add decoded-transaction logging to `sendTransactions` in
-    `facilitator/index.ts`: print the decoded `gas`, `maxFeePerGas`,
-    and the computed `requiredWei` before the `MAX_GAS_TOPUP_WEI`
-    comparison. The Privy-signed approval currently yields a
-    `requiredWei` of 1.36e24 (~4.5e8 x too high) and there is no way to
-    see which field is wrong without this. Subsumes the
-    logging gap already noted at the end of the sponsorship entry in
-    Completed.
+10. DONE -- decoded-transaction logging now exists in
+    `sendTransactions` (`facilitator/index.ts`), and it is what
+    root-caused the 1.36e24 `requiredWei` in a single read (see
+    Completed). Keep it rather than stripping it after the fact: it is
+    currently the only observability on a code path that spends real
+    gas-wallet funds. Nothing on the BSC rail is blocking any more --
+    the next real decision there is item 11.
 11. Decide `showWalletUIs`. It is currently unset in
     `app-providers.tsx`, so it defaults to true and Privy shows a
     confirmation modal for BOTH the witness signature and the approval
@@ -1513,3 +1568,42 @@ degrades. Reject any provider that cannot satisfy this.
   `psql hoodstack_dev -c '\d "LedgerEntry"'` before writing any query
   rather than inferring names from the domain language used in these
   notes.
+
+## Session Notes (cont. 12)
+
+- **The instrumentation earned its keep in a single round-trip.** The
+  prior session spent four anchor-verified adapter patches guessing at
+  the Privy boundary and got byte-identical errors each time. This
+  session added one log line on the far side of that boundary and the
+  bad value was readable immediately -- its ASCII decode
+  (`0x30783131313730` -> `"0x11170"`) named the bug outright. Third
+  occurrence of this underlying pattern, so per closing ritual #5 it is
+  now a standing rule in `ai-workflow-rules.md` rather than another
+  note here.
+- **A byte-identical result across two different inputs is evidence
+  about the EXPERIMENT, not only about the system.** Sending both `gas`
+  and `gasLimit` produced no change at all, which was read as proof the
+  bad value originated inside Privy. It was not: both fields were
+  corrupted identically by the same encoding step, so the test could
+  never have distinguished them. When a change makes literally no
+  difference, first ask whether it was distinguishable at the boundary
+  being tested.
+- **Re-running an unchanged system produces no new information.** The
+  same failing deposit was run three separate times mid-session before
+  any fix existed, each producing an identical `payment-response`.
+  Nothing was learned beyond what the first run showed. The useful
+  action at that point was always on the other side of the boundary.
+- **A stale process silently invalidated a test.** `npm run dev` in
+  `facilitator/` died on `EADDRINUSE` while an older instance kept
+  serving port 4022, so a run that appeared to exercise the new logging
+  was actually served by a build predating it. Kill the port
+  (`lsof -ti:4022 | xargs kill`) and confirm the startup banner before
+  trusting any facilitator-side observation.
+- **Pipe the facilitator to a file rather than relying on scrollback.**
+  `npm run dev 2>&1 | tee /tmp/facilitator.log` made `grep -A 25`
+  possible and survived terminal churn; the multi-line decoded-tx dump
+  is impractical to read any other way.
+- **The connected Rabby wallet was briefly the test treasury address**
+  (`0x1386405...`), meaning deposits were paying to an address whose
+  key sat in the browser. Harmless for a throwaway testnet value, but
+  not a habit to carry into anything with a real treasury.

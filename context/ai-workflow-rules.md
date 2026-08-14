@@ -89,6 +89,33 @@ hook and is a no-op stub; `signTransaction` was assumed to belong to
 fine. Each was found only by reading compiled source, and each was
 invisible to `tsc`.
 
+## Instrumenting a Boundary Before Patching Across It
+
+When a value crosses into third-party code -- a wallet SDK's signing
+path, a facilitator's decode, any serialization boundary -- and comes
+back wrong, add logging on the FAR side before changing what gets sent.
+Do not iterate on the arguments while the receiving end is silent about
+what it actually received.
+
+This is the runtime-values counterpart to the compiled-source rule
+above, and it is a standing rule because guessing has now cost three
+separate sessions:
+
+- Four adapter patches against Privy's `signTransaction` produced
+  byte-identical facilitator errors, because both candidate fields were
+  corrupted the same way and the experiment could not tell them apart.
+- One log line in the facilitator's `sendTransactions`, printing the
+  decoded transaction, named the bug on first read: the gas value's
+  ASCII decode was the hex string we had sent.
+- Earlier, the same shape: an "opaque" empty-body 402 whose real reason
+  sat in the `payment-response` header through two sessions of
+  theorizing.
+
+Corollary worth stating outright: if a change produces literally no
+difference in the output, suspect the experiment before concluding
+anything about the system. Byte-identical results usually mean the two
+cases were never distinguishable at the boundary being tested.
+
 ## Keeping Docs in Sync
 
 Update the relevant context file whenever implementation changes:
