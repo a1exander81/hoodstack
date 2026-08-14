@@ -884,18 +884,26 @@
   username when a Privy DID has both an embedded and an external
   wallet? Small in scope but unresolved -- flagged when the
   wallet-prefix username decision was locked in.
-- Which Privy DID is the canonical test identity? `did:privy:
-  cmsmrt71l00a80ckz455i9ha2` credited a deposit in a prior session, and
-  again this session's fresh-burner sponsorship test credited the same
-  DID -- but PR #7's verification credited `did:privy:
-  cmsn52rxu02ye0cl11k3aqoy0`. A second DID was almost certainly created
-  by a mid-session Google re-login after a 401. Harmless on testnet,
-  but it is the "two separately-created DIDs are never auto-merged"
-  scenario from Architecture Decisions observed live, with ledger
-  balance now split across both, and `cmsmrt71l00a80ckz455i9ha2` now
-  the more consistently active one across two sessions -- still worth
-  deciding which is canonical before any further ledger verification
-  work treats one as authoritative.
+- **RESOLVED: `did:privy:cmsmrt71l00a80ckz455i9ha2` is the canonical
+  test identity.** Queried `hoodstack_dev`'s `LedgerEntry` table
+  directly with `psql`: every BSC deposit, including both from the
+  Privy-embedded-signer session, credited that DID. There is no split
+  on this database. `did:privy:cmsn52rxu02ye0cl11k3aqoy0` credited
+  PR #7's Robinhood Chain verification and does not appear in the BSC
+  entries -- so the two DIDs were never competing within one ledger,
+  which is what "balance split across both" previously implied. The
+  underlying Architecture Decisions point still holds (two
+  separately-created DIDs are never auto-merged); it just was not
+  causing the problem it appeared to.
+- **Related correction, important for any future ledger check: local
+  dev and production use DIFFERENT databases.** `DATABASE_URL` in
+  local `.env` points at Homebrew Postgres
+  (`postgresql://<user>@localhost:5432/hoodstack_dev`); `DATABASE_URL`
+  in Vercel points at Neon. Same variable name, different target per
+  environment. An entry's absence from one says nothing about the
+  other, and any verification claim must name WHICH database it
+  checked. This likely explains part of the PR #5-era stale-script
+  confusion logged in Session Notes (cont. 4).
 
 ## Architecture Decisions
 
@@ -1471,12 +1479,37 @@ degrades. Reject any provider that cannot satisfy this.
   `export $(...)` dumping the entire environment, and finally a guess
   at the generated Prisma client's location that was never verified
   (`src/generated/prisma` is gitignored and may not exist until
-  `postinstall` runs). Correct move would have been to verify the
-  client path FIRST. The DID-split question is unchanged and remains in
-  Open Questions.
+  `postinstall` runs). It was eventually answered, and BOTH real causes
+  turned out to be mundane and unrelated to any of the above: (1) the
+  Prisma 7 `prisma-client` generator emits TypeScript source with NO
+  `index.ts`, so the import must be
+  `src/generated/prisma/client`, not the bare directory -- the
+  directory existed the whole time; (2) `DATABASE_URL` lives in `.env`,
+  not `.env.local`, so every attempt that grepped `.env.local` passed
+  an empty string and `pg` silently fell back to a local default named
+  after the macOS user. See the resolved DID entry in Open Questions.
 
 - **Privy renders a full EIP-712 payload in its signing modal**, which
   made it possible to verify the Permit2 domain, spender, and witness
   visually before signing. Useful diagnostic surface worth reaching for
   again -- it confirmed the payload was correct while the failure was
   downstream.
+- **Reach for the tool that touches the thing directly.** Seven
+  attempts to read the ledger went through the application's own
+  Prisma client -- adapter config, driver adapters, env loading, path
+  aliases, generated-client resolution, all of it incidental to the
+  actual question. `psql hoodstack_dev -c 'SELECT * FROM
+  "LedgerEntry" ORDER BY "createdAt" DESC LIMIT 10;'` answered it
+  immediately and would have at any point. For read-only inspection of
+  local Postgres, use `psql`; reserve the Prisma client for code that
+  actually needs the app's types. Same shape as this session's other
+  lesson about instrumenting a boundary rather than patching across
+  it: prefer the shortest path to the real value.
+- **`LedgerEntry`'s real column names are `userId` and
+  `amountMicroUsd`** -- not `did` and `amount`, both of which were
+  guessed and both of which failed. Full schema: `id`, `userId`,
+  `type` (`LedgerEntryType` enum), `amountMicroUsd` (bigint), `asset`,
+  `chainId`, `txHash`, `createdAt`. Worth reading with
+  `psql hoodstack_dev -c '\d "LedgerEntry"'` before writing any query
+  rather than inferring names from the domain language used in these
+  notes.
