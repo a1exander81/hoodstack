@@ -200,13 +200,46 @@ function privyToClientSigner(
           primaryType: message.primaryType,
           message: stripBigInts(message.message),
         } as Parameters<PrivySignTypedData>[0],
-        { address },
+        // Suppress Privy's confirmation modal for THIS call only, not
+        // app-wide. `showWalletUIs` is unset in app-providers.tsx and
+        // stays that way: every other embedded-wallet signature Privy
+        // ever performs keeps its prompt. Verified in the installed
+        // dts that this per-call option exists on usePrivy()'s own
+        // signTypedData, and in dist/esm/solana.mjs that Privy relies
+        // on the same per-call false internally with app config left
+        // at its default.
+        //
+        // PREREQUISITE, not optional: this removes the only consent
+        // surface the player sees. It is acceptable here because
+        // /dev/x402-test is a dev harness with no player. Before this
+        // reaches a real deposit UI, an app-level confirmation must
+        // sit in front of it -- see Architecture Decisions in
+        // progress-tracker.md.
+        { address, uiOptions: { showWalletUIs: false } },
       );
       return signature as `0x${string}`;
     },
-    // TRAP 1: @x402/evm hardcodes `gas`; Privy's TEE path resolves
-    // gas_price as `gasPrice ?? gas`, which would submit the 55,000 gas
-    // LIMIT as a gas PRICE. Strip `gas`, pass `gasLimit`.
+    // TRAP 1: @x402/evm hardcodes `gas` (70000, ERC20_APPROVE_GAS_LIMIT
+    // -- read from the installed @x402/evm@2.21.0 compiled source, not
+    // the 55,000 an earlier version of this comment claimed). Privy's
+    // TEE path resolves `gas_limit: gasLimit ?? gas` AND
+    // `gas_price: gasPrice ?? gas` -- confirmed verbatim in the
+    // installed dist/esm/privy-provider-*.mjs -- so a leaked `gas`
+    // would be submitted as a gas PRICE on that path.
+    //
+    // Both `gas` and `gasLimit` are sent below, deliberately. An
+    // earlier version of this comment said to strip `gas`; the code
+    // never did, and stripping it now would be a change to the only
+    // configuration ever proven to settle a deposit. The on-device
+    // path (the one this adapter actually takes -- proven by TRAP 3's
+    // BigInt crash, which only that path can produce) forwards the
+    // request object untouched and does neither resolution, so which
+    // field it reads is unknown. Do not "clean this up" by guessing:
+    // the decoded-transaction log in facilitator/index.ts's
+    // sendTransactions answers it empirically in one run.
+    //
+    // The TEE-path hazard is real but not live today. It becomes live
+    // if a unified wallet is used or Privy changes the default branch.
     // TRAP 2: the SDK uses this return value directly as a raw serialized
     // transaction, but Privy returns `{ signature }`. Unwrap it.
     signTransaction: async ({
@@ -246,7 +279,14 @@ function privyToClientSigner(
           maxFeePerGas: hex(maxFeePerGas),
           maxPriorityFeePerGas: hex(maxPriorityFeePerGas),
         } as Parameters<PrivySignTransaction>[0],
-        { address },
+        // Same per-call suppression as the witness signature above, and
+        // the more important of the two: this is the approval prompt
+        // the player never initiated. Privy's decoder renders it as
+        // "would like your permission for <spender> to spend tokens on
+        // your behalf" (see the Pv send-transaction screen in
+        // dist/esm/privy-provider-*.mjs), which is accurate and
+        // unreadable to a non-crypto player.
+        { address, uiOptions: { showWalletUIs: false } },
       );
       return signature as `0x${string}`;
     },

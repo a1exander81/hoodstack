@@ -70,6 +70,13 @@
   Permit2 witness signature and the ERC-20 approval signature through
   Privy's UI.
 
+- **Correction to the line above, from a later session:** the witness
+  signature no longer goes "through Privy's UI" -- it is now headless
+  via a per-call `uiOptions.showWalletUIs: false`, proven by a real
+  settled deposit with zero modals (see Completed). The approval
+  signature's prompt is UNTESTED: that leg never ran, because the
+  wallet used already held a `maxUint256` Permit2 allowance.
+
 - **RESOLVED -- the `requiredWei` blocker is closed, and the BSC rail
   now has a working player-facing signer.** Root cause was in our own
   `privyToClientSigner`, not Privy: the gas limit was pre-hex-encoded
@@ -829,6 +836,57 @@
     third carries a fresh signature with `gas: "70000"`. Useful as a
     self-contained before/after if this is ever revisited.
 
+- **Privy's confirmation modal suppressed per-call, not app-wide --
+  witness signature proven headless, approval signature still
+  untested.** Next Up item 11 framed `showWalletUIs` as a global
+  toggle with two bad options: leave it true (two modals mid-deposit,
+  one of which the player never initiated, both rendering raw EIP-712)
+  or set it false app-wide (every embedded-wallet signature loses its
+  confirmation surface forever, weakening `architecture.md`'s access
+  model well beyond the deposit flow). Reading the installed
+  `@privy-io/react-auth` showed the framing was wrong -- a per-call
+  override exists:
+  - `dist/dts/index.d.ts`: `usePrivy()`'s own `signTypedData` and
+    `signTransaction` each take
+    `options?: { uiOptions?: ...; address?: string }`. The adapter
+    already passed `{ address }` as that argument, so this needed one
+    key added per call site, not a hook swap.
+  - `dist/dts/types-B_DvyjIb.d.ts`:
+    `SignMessageModalUIOptions`/`SendTransactionModalUIOptions` both
+    carry `showWalletUIs?: boolean`, documented as defaulting to (and
+    therefore overriding) the Dashboard setting and the
+    `embeddedWallets` config.
+  - `dist/esm/solana.mjs`: Privy's own `signTransaction` and
+    `signAndSendTransaction` pass
+    `uiOptions: { ...opts, showWalletUIs: !1 }` internally to suppress
+    a nested prompt, with app config left at its default -- so a
+    per-call false is sufficient on its own, not ANDed with app
+    config. (`isHeadlessSigning` is
+    `u(be, [ee.embeddedWallets.showWalletUIs])`, called everywhere as
+    `({ showWalletUIs: <per-call value> })`.)
+  - **Verified empirically**: a real BSC deposit settled through the
+    Privy embedded wallet
+    (`0xEC11f1Cb1B8c5EE82E99019B1a0Bd2A302ce5077`) with ZERO modals,
+    where the same wallet previously produced them. `showWalletUIs`
+    remains unset in `app-providers.tsx` -- every other
+    embedded-wallet signature keeps its prompt.
+  - **What this does NOT prove, stated plainly**: `sendTransactions`
+    never appears in the facilitator log for this run, so the ERC-20
+    approval leg never executed -- the wallet's Permit2 allowance was
+    already `maxUint256` from a prior session. Only `signTypedData`
+    was exercised. The two calls take different option types down
+    different internal branches, so this result does not carry to the
+    approval prompt. Testing it needs an embedded wallet whose
+    allowance is not already max, which means a fresh Privy embedded
+    wallet on a new DID (the dev burner cannot test this -- it uses
+    `privateKeyToAccount` and never touches Privy's UI at all).
+  - **Prerequisite recorded, not satisfied**: headless signing removes
+    the only consent surface the player sees. There is currently no
+    player-facing deposit UI to put an app-level confirmation in front
+    of it (`src/app` still holds only `api/` and `dev/`), so the
+    constraint lives only in a code comment. See Architecture
+    Decisions.
+
 ## In Progress
 
 - None
@@ -892,13 +950,21 @@
     currently the only observability on a code path that spends real
     gas-wallet funds. Nothing on the BSC rail is blocking any more --
     the next real decision there is item 11.
-11. Decide `showWalletUIs`. It is currently unset in
-    `app-providers.tsx`, so it defaults to true and Privy shows a
-    confirmation modal for BOTH the witness signature and the approval
-    -- two extra prompts mid-deposit, one of which the player never
-    initiated. Headless signing requires setting it explicitly to
-    false. This is a real player-facing UX decision, not a dev-harness
-    detail.
+11. PARTLY RESOLVED -- `showWalletUIs` is not a global toggle after
+    all. A per-call `uiOptions.showWalletUIs: false` override exists on
+    `usePrivy()`'s `signTypedData`/`signTransaction` and is sufficient
+    on its own; it is now applied to both call sites in
+    `/dev/x402-test`, with app-level config left unset so no other
+    embedded-wallet signature loses its prompt (see Completed). The
+    witness signature is proven headless by a real settled deposit
+    with zero modals. What remains:
+    - The ERC-20 approval prompt is UNTESTED -- that leg never ran
+      (allowance already `maxUint256`). Needs a fresh Privy embedded
+      wallet on a new DID to exercise; the dev burner cannot test it.
+    - The app-level confirmation UI that must sit in front of headless
+      signing does not exist and cannot exist yet -- there is no
+      player-facing deposit UI at all. This is a hard prerequisite
+      before headless signing reaches a player, not a nice-to-have.
 
 ## Open Questions
 
@@ -1607,3 +1673,50 @@ degrades. Reject any provider that cannot satisfy this.
   (`0x1386405...`), meaning deposits were paying to an address whose
   key sat in the browser. Harmless for a throwaway testnet value, but
   not a habit to carry into anything with a real treasury.
+
+## Session Notes (cont. 13)
+
+- **`dist/dts/` answers most SDK questions and `dist/esm/` answers
+  few.** Both `showWalletUIs` questions this session -- does a
+  per-call override exist, and is it on the methods this code already
+  calls -- were answered by plain `grep -n` on the unminified
+  TypeScript declarations. The minified bundle was only needed to
+  confirm Privy relies on the same per-call false internally. Read
+  `dist/dts/` first; drop to `dist/esm/` only when the types are
+  genuinely ambiguous. This does NOT weaken the standing rule about
+  reading compiled source over type signatures -- that rule is about
+  whether a hook is WIRED to anything, which dts cannot answer. It is
+  about which file to open first for a question about an API's shape.
+- **Two grep habits that do not work on `node_modules`.** BSD
+  `grep -E` on macOS rejects interval expressions with a zero lower
+  bound (`{0,120}`) -- "invalid repetition count(s)". And `grep -n` on
+  a minified bundle prints the ENTIRE FILE as one line, which floods
+  the terminal and answers nothing. For windowed extraction from
+  minified source, use a Python one-liner with `re.finditer` and
+  explicit slicing.
+- **Heredocs do not survive paste into this terminal.** A
+  `python3 - <<'EOF'` block lost its opener; zsh swallowed the body as
+  continuation lines and `EOF` silently closed it, producing no output
+  and no error. This is the THIRD variant of the same underlying
+  problem, after backslash line continuations and `<placeholder>`
+  syntax (both cont. 9), so per closing ritual #5 it is promoted to a
+  standing rule in `ai-workflow-rules.md` rather than logged again
+  here.
+- **An empty grep result was read as a contradiction when it was just
+  premature.** `grep` on the facilitator log came back empty while the
+  page reported a settled deposit; this was called "contradictory" and
+  several failure modes (silent local rejection, stdout buffering,
+  wrong `FACILITATOR_URL`) were listed before establishing the simplest
+  explanation -- the grep ran before the deposit was submitted. The
+  log had 154 lines moments later. Same family as cont. 10's
+  paste-history artifact and cont. 11's `&&`-after-grep: a benign
+  non-result that looks like a failure. Establish WHEN a diagnostic ran
+  relative to the action it is measuring before theorizing about what
+  it means.
+- **A zero-modal result is not self-evidently a pass.** The deposit
+  settled with no Privy prompts, which looks like proof the override
+  works -- but the approval leg never ran, so half the thing being
+  tested was never exercised. The tell was in the facilitator log
+  (`sendTransactions` absent), not in the browser. Same shape as
+  cont. 12's byte-identical-result lesson: when a result looks clean,
+  check that the mechanism under test actually executed.
