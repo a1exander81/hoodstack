@@ -1,6 +1,10 @@
 {
   "compilerOptions": {
-    "target": "ES2017",
+    // ES2020 for native BigInt literals (1_000_000n). Money is a branded
+    // bigint in integer minor units throughout -- see code-standards.md.
+    // SWC does the real transpilation and ignores this; tsc uses it only
+    // to decide which syntax to allow. viem already requires native BigInt.
+    "target": "ES2020",
     "lib": ["dom", "dom.iterable", "esnext"],
     "allowJs": true,
     "skipLibCheck": true,
