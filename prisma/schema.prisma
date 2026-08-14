@@ -28,3 +28,57 @@ model LedgerEntry {
 
   @@index([userId])
 }
+
+enum GameKind {
+  COINFLIP
+  CRASH
+  MINES
+  ROULETTE
+}
+
+/// Provably-fair seed pair. One server seed covers many rounds via an
+/// incrementing nonce; see architecture.md invariant 2.
+///
+/// `revealedAt IS NULL` means active. There is deliberately no separate
+/// `active` boolean -- a single field cannot contradict itself, and a
+/// partial unique index enforces at most one active pair per user.
+/// That index is NOT expressible in Prisma schema syntax and is added
+/// as raw SQL in the migration; if it is ever dropped, two active pairs
+/// can exist for one user and nonce ordering stops being meaningful.
+model SeedPair {
+  id             String      @id @default(cuid())
+  userId         String      // Privy DID (user.id) — NOT a wallet address
+  serverSeed     String      // SECRET until revealedAt is set — never send to a client before then
+  serverSeedHash String      // SHA-256 of serverSeed; published at creation, before any bet
+  clientSeed     String      // player-supplied or defaulted; editable only while this pair is active
+  nonce          Int         @default(0) // last-used nonce; next round uses nonce + 1
+  revealedAt     DateTime?   // set on rotation; non-null = closed, never accepts another round
+  createdAt      DateTime    @default(now())
+  rounds         GameRound[]
+
+  @@index([userId])
+}
+
+/// A settled round. Outcome is reproducible from the pair's seeds plus
+/// this nonce, so it is stored for display and dispute, never as the
+/// source of truth for money -- that stays in LedgerEntry.
+model GameRound {
+  id             String   @id @default(cuid())
+  userId         String   // Privy DID; denormalized from SeedPair for query speed
+  seedPairId     String
+  seedPair       SeedPair @relation(fields: [seedPairId], references: [id])
+  nonce          Int
+  game           GameKind
+  outcome        Json     // game-specific: { side, result } for coinflip
+  wagerMicroUsd  BigInt
+  payoutMicroUsd BigInt   // 0 on a loss
+  createdAt      DateTime @default(now())
+
+  // Load-bearing. Nonce reuse would silently reproduce an identical
+  // outcome. Enforced at the DB level rather than by an app-side
+  // increment, for the same reason services/ledger keys idempotency on
+  // a unique txHash: an app-level check-then-insert has a race window
+  // under concurrent requests that a constraint does not.
+  @@unique([seedPairId, nonce])
+  @@index([userId, createdAt])
+}

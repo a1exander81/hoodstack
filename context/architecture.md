@@ -74,11 +74,37 @@
 
 1. No route mutates a user's table balance except through
    `services/ledger`, and every mutation must be tied to a settled
-   on-chain deposit, a settled game round with a revealed seed, or a
-   submitted withdrawal.
-2. The client is never trusted for game outcomes — the RNG server
-   seed is generated and hashed before a bet is accepted, and only
-   revealed after settlement.
+   on-chain deposit, a settled game round carrying a published seed
+   commitment, or a submitted withdrawal. Note "commitment", not
+   "revealed seed": under the seed-pair model in invariant 2 the raw
+   server seed is not revealed until the pair is rotated, which is
+   after settlement, so requiring a revealed seed at payout time
+   would forbid every payout.
+2. The client is never trusted for game outcomes. Randomness uses a
+   seed-pair commit/reveal scheme: a server seed is generated and its
+   SHA-256 hash published to the player *before* any bet against that
+   pair is accepted. One server seed covers many rounds, each
+   distinguished by a strictly incrementing per-pair nonce, so a
+   round's outcome is fixed by (server seed, client seed, nonce) and
+   nothing the client sends after the commitment can change it. The
+   raw server seed is revealed when the player rotates the pair, at
+   which point that pair is closed permanently: a revealed seed is
+   never reused, and no round is ever accepted against an
+   already-revealed pair.
+
+   Chosen deliberately over per-round reveal. Per-round reveal would
+   publish the seed at settlement and satisfy a stricter reading of
+   this invariant, but it makes the player's client seed inert --
+   there is nothing to manage across rounds, which is the feature
+   `project-overview.md` lists under Settings. Seed pairs are also
+   the model existing third-party provably-fair verifiers already
+   implement, so players can check rounds with tools we did not
+   write.
+
+   Operational consequence, stated because it is easy to miss: the
+   server seed sits in Postgres in plaintext until reveal. Read
+   access to that database is equivalent to knowing every unsettled
+   round's outcome. See `progress-tracker.md` Open Questions.
 3. An x402/Permit2 signature authorizes a specific amount and
    destination only; neither the facilitator nor the backend can
    alter either value.
