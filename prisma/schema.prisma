@@ -14,19 +14,24 @@ datasource db {
 
 enum LedgerEntryType {
   DEPOSIT
+  WAGER
+  PAYOUT
 }
 
 model LedgerEntry {
   id             String          @id @default(cuid())
   userId         String          // Privy DID (user.id) — NOT a wallet address
   type           LedgerEntryType
-  amountMicroUsd BigInt          // integer minor units; positive = credit
-  asset          String          // "USDG" | "USDT"
-  chainId        Int             // 46630 = Robinhood Chain Testnet, 97 = BSC Testnet
-  txHash         String          @unique // idempotency key
+  amountMicroUsd BigInt          // integer minor units; positive = credit, negative = debit
+  asset          String?         // "USDG" | "USDT" — deposits only; null for game rounds
+  chainId        Int?            // 46630 | 97 — deposits only; null for game rounds
+  txHash         String?         @unique // deposit idempotency key; null for game rounds
+  gameRoundId    String?
+  gameRound      GameRound?      @relation(fields: [gameRoundId], references: [id], onDelete: Restrict)
   createdAt      DateTime        @default(now())
 
   @@index([userId])
+  @@index([gameRoundId])
 }
 
 enum GameKind {
@@ -73,6 +78,7 @@ model GameRound {
   wagerMicroUsd  BigInt
   payoutMicroUsd BigInt   // 0 on a loss
   createdAt      DateTime @default(now())
+  ledgerEntries  LedgerEntry[]
 
   // Load-bearing. Nonce reuse would silently reproduce an identical
   // outcome. Enforced at the DB level rather than by an app-side
