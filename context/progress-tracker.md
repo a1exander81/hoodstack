@@ -3,7 +3,32 @@
 ## Current Phase
 
 - **Most recent state (read this first; every bullet below predates
-  it).** The first game and the provably-fair mechanism both exist.
+  it).** The wager path is real, merged, and playable. A player picks
+  a side; the route reserves a nonce against a commitment published
+  BEFORE the bet, `services/games` derives the outcome from that
+  round's float, and `services/ledger` moves the balance -- two rows
+  on a win (`WAGER` + `PAYOUT`), one on a loss. `dev-stubs.ts` and the
+  simulated-round banner are both deleted, so `Math.random()` no
+  longer decides anything anywhere in the repo. Two real rounds
+  settled against `hoodstack_dev` under commitment `d7fc78d2...`:
+  nonce 1 a loss (-1000000), nonce 2 a win (-5000000 then +9900000,
+  exactly 1.98x), with the derived balance landing at 9960000 and the
+  UI reading $9.96. Three PRs merged tonight: #14 (`22b3d36`) ledger
+  entry point + schema + `services/games` + the house-edge decision,
+  #15 (`3b57e04`) lazy Prisma init, #16 (`c2be303`) the two routes and
+  the Coinflip rewiring.
+  **Production does NOT work.** `/api/games/session` returns 401 on
+  `hoodstack-tawny.vercel.app` for a user who is genuinely signed in
+  (Privy `POST /api/v1/sessions` succeeds, embedded wallet resolves,
+  app ID matches local). Local is fine end to end. Production's
+  identity gate has never successfully verified a token -- every
+  deposit this project ever settled ran through the local dev server,
+  which is also why Neon's `LedgerEntry` is empty -- so the wager
+  route is simply the first code that ever asked it to. See Next Up
+  item 14.
+
+- **Superseded (the PR #12/#13 era, kept for the trail).** The first
+  game and the provably-fair mechanism both exist.
   `src/app` is no longer `api/` + `dev/` only: an `(app)` route group
   holds a session-gated Coinflip page (PR #12), running on
   deliberately inert stubs -- a fixed balance that never decrements,
@@ -84,14 +109,22 @@
 
 ## Current Goal
 
-- **The next unit is the wager path**: a route that reserves a round
-  via `services/rng`, debits the wager and credits the payout through
-  `services/ledger`, writes the `GameRound` row, and returns the
-  commitment to the client. It replaces `dev-stubs.ts` entirely and
-  deletes the simulated-round banner. Two protected paths in one
-  change, so branch -> PR -> CodeRabbit without exception. Blocked on
-  nothing technical; the open decision it needs is the per-game house
-  edge (see Open Questions).
+- **The next unit is production's 401, and it is a diagnosis before
+  it is a fix.** `/api/games/session` and `/api/games/coinflip` both
+  reject a valid Privy access token in production while working
+  locally. Established: the browser holds a real session, the app ID
+  is the same in both environments (`cmskn1c5v00zv0cjlz58nrrif`), and
+  the failure is a 401 from `resolveAuthenticatedDid`, not a 500 from
+  Prisma. The leading hypothesis is that `PRIVY_VERIFICATION_KEY` in
+  Vercel lost its line breaks -- it is a genuine 3-line PEM locally --
+  but that is UNCONFIRMED and must not be treated as established: the
+  value is Sensitive and cannot be read back, and one attempt to infer
+  it from `vercel env pull` produced a false positive tonight (see
+  Session Notes cont. 15). Instrument before changing anything: log
+  the key's LENGTH and whether it contains a real newline, never the
+  key itself. Only then choose between re-adding the variable and
+  normalizing escaped `\n` at the boundary in
+  `services/settlement/verify-session.ts`.
 
 - The `erc20ApprovalGasSponsoring` gap flagged at the top of this
   file is now closed: a genuinely fresh burner (verified at 0 BNB, 0
@@ -154,6 +187,90 @@
   custody question.
 
 ## Completed
+
+- **The wager path built, merged, and verified end to end** -- three
+  PRs, in dependency order.
+  - **PR #14** (`feat/wager-ledger-entries`, squash-merged as
+    `22b3d36`). Schema: `LedgerEntryType` gains `WAGER`/`PAYOUT`;
+    `asset`/`chainId`/`txHash` relaxed to nullable (deposit-only
+    fields) with the zod boundary still requiring all three for
+    deposits; `gameRoundId` added as a nullable FK with
+    `onDelete: Restrict`. Prisma generated `ON DELETE SET NULL` by
+    default, which would have silently orphaned ledger rows carrying
+    real money -- corrected in the schema rather than by hand-editing
+    the migration SQL, so a regeneration cannot lose it (the lesson
+    from `SeedPair_userId_active_key`).
+    `settleInstantRound()` is the new entry point: `GameRound` row plus
+    one or two `LedgerEntry` rows in ONE transaction under
+    `pg_advisory_xact_lock(hashtext(userId))`. The lock is
+    load-bearing -- `aggregate()` takes no locks, so a read-then-insert
+    balance check lets two concurrent bets both pass. Idempotency comes
+    from `GameRound`'s existing `@@unique([seedPairId, nonce])`, not a
+    new column: `reserveRound` already claims each nonce atomically.
+    Two rows per winning round rather than one net row, deliberately --
+    a net row destroys the ability to audit stake separately from
+    return.
+    `services/games` added as a NEW system boundary (documented in
+    `architecture.md` and `code-standards.md` in the same PR): pure,
+    deterministic resolvers with no database, no network, no app
+    state. The ledger IMPORTS these to derive the payout
+    authoritatively rather than trusting a caller-supplied figure.
+    **Verified 34/34 against real local Postgres** via a disposable
+    `scripts/verify-wager.ts` (deleted after use, refusing to run
+    unless `DATABASE_URL` was local, and cleaning up every row it
+    created): loss writes exactly one negative row; win writes two
+    netting +0.98x; replayed `(seedPairId, nonce)` returns
+    `already-settled` and moves the balance by zero; an over-balance
+    wager throws `InsufficientBalanceError` leaving no orphan
+    `GameRound`; two concurrent settles against a one-wager balance
+    yield exactly one success; and all three rounds re-derive from the
+    seed revealed at rotation. Caveat recorded honestly:
+    `Promise.allSettled` cannot GUARANTEE the two transactions
+    overlapped in Postgres, so the concurrency result is strong
+    evidence rather than proof.
+  - **PR #15** (`fix/lazy-prisma-init`, squash-merged as `3b57e04`).
+    `src/lib/prisma.ts` called `createPrismaClient()` at module scope,
+    so merely IMPORTING it threw when `DATABASE_URL` was unset. Next's
+    "Collecting page data" step imports every route module without
+    querying, which turned a missing Preview env var into a hard build
+    failure the moment `services/ledger`'s barrel export gave the
+    deposit route a path to the module. Fixed with a Proxy that
+    resolves the client on first property access. Before/after proven
+    on the same command: `DATABASE_URL= npx tsx -e 'import(...)'`
+    threw `DATABASE_URL is not set` unpatched and printed
+    `PASS: import succeeded` patched. 13 further checks against the
+    real generated client covering delegates, tagged templates,
+    interactive transactions, advisory locks and rollback.
+  - **PR #16** (`feat/wager-route`, squash-merged as `c2be303`).
+    `GET /api/games/session` publishes balance + commitment;
+    `POST /api/games/coinflip` reserves, settles, responds. Identity
+    comes from the Privy access token only, never the request body.
+    **Invariant 2 is enforced rather than assumed**: the client must
+    echo back the `serverSeedHash` it was shown, and a mismatch returns
+    409 -- without that check `getActiveCommitment` would happily
+    create a pair DURING the first bet, meaning the commitment and the
+    round came into existence together. Balance is withheld until the
+    coin animation lands so the number cannot spoil the outcome.
+    `dev-stubs.ts` deleted, banner removed.
+  - **Migration applied to BOTH databases and verified against each
+    catalog, not against the command's success line.** Local: the nine
+    pre-existing deposit rows kept their `asset`/`chainId`/`txHash`
+    through the `DROP NOT NULL`. Neon (Postgres 18.4, so the
+    two-`ALTER TYPE ADD VALUE` caveat in the generated SQL does not
+    apply): enum reads `DEPOSIT`/`WAGER`/`PAYOUT`, the three columns
+    read nullable, `gameRoundId` present with `ON DELETE RESTRICT`.
+
+- **The 1% house edge recorded as a decision** (`74fc47b`, on the
+  PR #14 branch). `project-overview.md` gains a `## House Edge`
+  section: 1% uniform, applied through each game's own mathematics
+  rather than one shared constant. Coinflip
+  `COINFLIP_PAYOUT_BPS = 19_800` (1.98x); Crash 1% instant-bust at
+  1.00x; Mines fair combinatorial payout x 0.99; Roulette 2.70%
+  STRUCTURALLY, from a single-zero European wheel -- there is no
+  multiplier to tune there, which is the whole reason this could not
+  be one number. Payouts are quoted as total return including stake,
+  not profit. The Coinflip constant did not change value; what changed
+  is that it stopped being an invention and became a decision.
 
 - **Context files corrected to describe the real stack: plain
   Tailwind, no component library** (`135234e`, direct to `main`).
@@ -1127,30 +1244,67 @@
       player-facing deposit UI at all. This is a hard prerequisite
       before headless signing reaches a player, not a nice-to-have.
 
-12. **The wager path** -- the next unit, and the first change to
-    touch `services/rng` and `services/ledger` in one go. Reserve a
-    round, debit the wager, settle, credit any payout, write the
-    `GameRound` row, return the commitment. Deletes `dev-stubs.ts`
-    and the simulated-round banner. Needs the house-edge decision
-    (Open Questions) before the payout arithmetic is real. Branch ->
-    PR -> CodeRabbit, no exception.
+12. DONE -- **the wager path shipped** across PRs #14 and #16 (see
+    Completed). `reserveRound` is called, `GameRound` rows are
+    written, balances move, `dev-stubs.ts` and the banner are gone,
+    and two real rounds settled against `hoodstack_dev` with the
+    arithmetic reconciling. What this did NOT cover: the same code
+    returns 401 in production (item 14).
 
-13. **Vercel Preview is missing `DATABASE_URL`.** Production has both
-    `DATABASE_URL` and `DIRECT_URL` freshly set; Preview has only
-    `DIRECT_URL` (from ~2 days prior). `vercel env add <name> preview`
-    cannot be driven by stdin at all -- see Session Notes (cont. 14) --
-    so this one needs the Vercel web dashboard. Nothing depends on
-    Preview deployments today, which is why it was left.
+13. **Vercel Preview `DATABASE_URL` -- no longer a blocker, still
+    absent.** PR #15's lazy Prisma init means a missing
+    `DATABASE_URL` no longer fails the BUILD, and Preview deployments
+    now go green without it (confirmed: the `fix/lazy-prisma-init`
+    preview built clean while Preview still had no such variable).
+    What remains is only the RUNTIME need -- any preview deployment
+    that actually queries the database still requires it. Four
+    attempts to set it failed tonight (see Session Notes cont. 15);
+    the web dashboard remains the only path, and it is not urgent.
+
+14. **Production returns 401 on the game routes.** Highest-priority
+    real bug. `/api/games/session` rejects a valid Privy token on
+    `hoodstack-tawny.vercel.app` while the identical code works
+    locally. Do NOT start by re-pasting `PRIVY_VERIFICATION_KEY` --
+    that is a hypothesis, not a diagnosis, and tonight already
+    produced one false positive about that variable. Instrument
+    first: temporarily log the key's length and whether it contains a
+    real newline (never the key), deploy, make one request, read the
+    answer. Then fix. Note the blast radius is wider than the games:
+    `services/settlement`'s deposit gate uses the SAME
+    `resolveAuthenticatedDid`, so if the key is bad, production
+    deposits would fail too -- silently, inside `onAfterSettle`'s
+    try/catch.
+
+15. **`/games/coinflip` First Load JS went 106 kB -> 865 kB.** The
+    page's own bundle barely moved (2.55 -> 3.21 kB); `usePrivy`
+    pulled the entire Privy client surface into what had been the
+    lightest route in the app. It is now nearly as heavy as `/` at
+    882 kB. Real regression, knowingly merged. The lighter shape is a
+    slim token context or a server-side session read rather than the
+    whole hook in the game bundle.
+
+16. **Nothing links to `/games/coinflip`.** There is no navigation to
+    any game from anywhere -- the landing page was never wired to the
+    `(app)` route group, so typing the URL is the only way in. Small,
+    but it means the game is currently unreachable by a real player.
 
 ## Open Questions
 
-- **What is the house edge, per game?** `PAYOUT_BPS = 19_800n` (1.98x)
-  currently sits in `dev-stubs.ts` as an invented placeholder chosen
-  to be visibly not-2.00x. No context file specifies an edge for any
-  game. It is almost certainly not one constant across all four --
-  Coinflip, Crash, Mines and Roulette normally carry their own -- so a
-  single shared value now becomes four wrong values later. Must be a
-  recorded decision before the wager path debits anything real.
+- **RESOLVED: the house edge is 1% uniform, with Roulette at 2.70%
+  structurally.** Recorded in `project-overview.md`'s `## House Edge`
+  section (`74fc47b`) rather than left in a code comment. The reason
+  it could not be a single constant is Roulette: its edge comes from
+  the zero pocket (1/37), not from a payout haircut, so it cannot be
+  tuned to 1% without changing the wheel. Coinflip's
+  `COINFLIP_PAYOUT_BPS = 19_800` is unchanged in value and now
+  documented as a decision.
+- **Has production's identity gate EVER worked?** Every deposit this
+  project has settled ran through the local dev server -- which is why
+  Neon's `LedgerEntry` is empty, a fact confirmed directly tonight.
+  `PRIVY_VERIFICATION_KEY` has therefore sat in Vercel unused since
+  the day it was added, and tonight's 401 is the first time anything
+  asked it to verify a token. If the value is bad it has always been
+  bad, and the deposit route would fail the same way in production.
 - **Who has read access to the production database, and does that need
   restricting?** Server seeds sit in Postgres in plaintext until
   reveal, so read access to Neon is equivalent to knowing every
@@ -1976,3 +2130,72 @@ degrades. Reject any provider that cannot satisfy this.
   `<placeholder>` syntax), so per closing ritual #5 it is promoted to
   the standing rule in `ai-workflow-rules.md` rather than logged again
   here.
+
+
+## Session Notes (cont. 15)
+
+- **A sandbox test caught a bug that `tsc` could not see, in code that
+  had already been handed over.** The first version of the lazy-Prisma
+  Proxy used `Reflect.get(client, prop, receiver)` -- passing the Proxy
+  as the receiver. That type-checks perfectly and throws at runtime:
+  `Cannot read private member #x from an object whose class did not
+  declare it`, because `this` inside the method becomes the Proxy.
+  It breaks `$queryRaw`/`$executeRaw` specifically -- the exact calls
+  `reserveRound` and the ledger's advisory lock depend on. Found only
+  because the script was run against a mock class with a private field
+  BEFORE reaching the repo. The fix is to read off the client and BIND
+  functions to it. General shape worth keeping: a Proxy is transparent
+  to the type system and not to the runtime.
+
+- **`vercel env pull` writes placeholders for Sensitive variables, and
+  the placeholder length looks like a finding.** `PRIVY_VERIFICATION_KEY`
+  came back as 36 characters, which was read as evidence the PEM had
+  been flattened. It was not: `DATABASE_URL` (a known-good ~200-char
+  string) came back as 26, and every sensitive variable was similarly
+  short. The check that settled it was listing LENGTHS FOR ALL KEYS and
+  noticing they were uniformly short. Nearly an hour of the wrong fix
+  was avoided by that one comparison. General rule: before concluding a
+  value is corrupt, confirm you are able to read it at all.
+
+- **`vercel env add <name> preview` has THREE prompts, not two, and
+  "Leave as is" silently stores an empty value.** Sensitive? comes
+  FIRST, then Value, then Git branch. Piped stdin answers at most one.
+  Tonight the paste into the masked Value prompt did not register, the
+  recovery option "Leave as is" was selected, and the CLI printed a
+  green checkmark for a variable with NO VALUE -- the exact failure
+  cont. 14 already documented, reproduced. It was removed immediately
+  (`vercel env rm DATABASE_URL preview`) because a present-but-empty
+  variable is harder to diagnose than a missing one. Four attempts
+  total across CLI and dashboard, all failed, on something that
+  blocked nothing.
+
+- **A command that opens a pager silently eats whatever is pasted
+  next.** `git diff` and `git log` both open `less`; three separate
+  commands this session went into the pager instead of the shell, one
+  of which (`git commit` + `git push`) appeared not to have run and
+  had actually succeeded off-screen. Promoted to a standing rule in
+  `ai-workflow-rules.md` -- it is the fifth distinct variant of
+  "the paste never reached the shell."
+
+- **Neon's `LedgerEntry` is empty, and that is not a bug.** The
+  `DROP NOT NULL` migration was checked against production data before
+  applying; there is none. Every settled deposit in this project's
+  history lives only in `hoodstack_dev`, because every deposit was
+  driven through the local dev server. Worth stating plainly because
+  "the deposit rail is proven end to end" is true of the MECHANISM and
+  has never been true of the production database.
+
+- **Three identical failing preview builds produced no new
+  information.** The `DATABASE_URL` build failure was re-run three
+  times across an hour while nothing about the environment had
+  changed. Same lesson as cont. 12, recognised late again: re-running
+  an unchanged system tells you nothing. The useful move was reading
+  WHY the import failed at all, which produced the lazy-init fix and
+  removed the requirement entirely.
+
+- **A scrollback paste can look like fresh command output.** Twice
+  tonight a re-pasted earlier block was read as the result of a
+  command that had not actually run -- once for the writer script,
+  once for a `grep` whose `&&` chain had short-circuited. Checking
+  WHEN output was produced relative to the action it supposedly
+  measures is the same habit cont. 13 already names.
