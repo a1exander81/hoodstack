@@ -24,6 +24,7 @@
 - `app/api/x402/*` — implements the 402-challenge/response cycle for deposit and withdrawal endpoints
 - `services/ledger` — the only code path permitted to mutate a user's table balance
 - `services/rng` — provably-fair seed generation and commit/reveal, isolated from the ledger and from any client-writable path
+- `services/games` — pure, deterministic round resolution. One resolver per game maps a float from `services/rng` plus the player's bet to an outcome and a payout. No database, no network, no app state: given the same inputs it must return the same result forever, because that is what a player re-deriving a settled round from a revealed seed computes. `services/ledger` imports these to derive a payout authoritatively rather than trusting a caller-supplied figure
 - `services/settlement` — reconciliation module, not a background worker. `reconcileSettledDeposit()` is invoked synchronously via `resourceServer.onAfterSettle(...)`, registered inside the x402 deposit route handler (`src/app/api/x402/deposit/route.ts`); it runs inline in the same request as the deposit, not as a separate process. On-chain verify/settle submission itself is handled by the self-hosted `facilitator/` service via `@x402/core`'s `x402HTTPResourceServer` — `services/settlement` only picks up once that resolves, and credits `services/ledger` with the confirmed tx hash and amount
 
 ## Storage Model

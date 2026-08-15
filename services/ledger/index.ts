@@ -7,3 +7,6 @@ export type { CreditDepositResult } from './credit-deposit';
 export { getTableBalanceMicroUsd } from './get-balance';
 export type { CreditDepositInput } from './schema';
 export type { Money } from './money';
+export { settleInstantRound, InsufficientBalanceError } from './settle-round';
+export type { SettleRoundResult } from './settle-round';
+export type { SettleRoundInput } from './round-schema';
