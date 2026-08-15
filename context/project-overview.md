@@ -73,6 +73,35 @@ Funding path depends on what the player already has:
 6. Player cashes out at any time — table balance converts back to
    their connected wallet.
 
+## House Edge
+
+**1% uniform**, applied through each game's own mathematics rather than
+as one shared constant. The value is deliberately recorded here, in the
+product definition, because a payout multiplier that lives only in code
+is an invention rather than a decision.
+
+| Game | Edge | How it is applied |
+| --- | --- | --- |
+| Coinflip | 1% | `COINFLIP_PAYOUT_BPS = 19_800` — 1.98x on an even-money bet |
+| Crash | 1% | 1% instant-bust probability at 1.00x; the rest of the curve is the fair distribution |
+| Mines | 1% | Fair combinatorial payout for (mines, gems revealed), multiplied by 0.99 |
+| Roulette | 2.70% | Structural, from a single-zero European wheel — there is no multiplier to tune |
+
+Roulette is the reason this is not a single number. Its edge comes from
+the zero pocket (1/37 = 2.70%), not from a haircut on the payout, so it
+cannot be set to 1% without changing the wheel itself. A double-zero
+American wheel would be 5.26%; European is the choice here.
+
+Payouts are quoted as **total return including the stake**, not profit.
+A winning 1.00 Coinflip wager returns 1.98 — recorded in the ledger as a
+-1.00 `WAGER` row and a +1.98 `PAYOUT` row, netting +0.98. Any UI that
+shows "0.98x" is describing the same event in profit terms; the ledger
+and `services/games` both use return terms throughout.
+
+1% matches what comparable provably-fair crypto casinos run, and it is
+far easier to raise later than to lower after players have seen a number.
+
+
 ## Features
 
 ### Authentication & Account

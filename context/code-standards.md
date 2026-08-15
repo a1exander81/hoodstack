@@ -75,8 +75,9 @@
 - `src/app/api/` — wallet, on-ramp, and x402 route handlers
 - `services/ledger/` — the only balance-mutating code path
 - `services/rng/` — provably-fair seed generation and reveal
-- `services/settlement/` — on-chain settlement worker and facilitator
-  client
+- `services/games/` — pure per-game round resolution, no I/O
+- `services/settlement/` — reconciliation module invoked inline via
+  `onAfterSettle`; not a background worker
 
 Note: this project scaffolds under `src/`, not a bare `app/` at repo
 root (see `tsconfig.json`'s `@/*` → `./src/*`). A root-level `app/`
