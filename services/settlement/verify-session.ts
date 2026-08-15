@@ -39,11 +39,43 @@ export async function resolveAuthenticatedDid(
     throw new Error('Empty bearer token');
   }
 
-  const { user_id: userId } = await verifyAccessToken({
-    access_token: accessToken,
-    app_id: PRIVY_APP_ID as string,
-    verification_key: PRIVY_VERIFICATION_KEY as string,
-  });
+  try {
+    const { user_id: userId } = await verifyAccessToken({
+      access_token: accessToken,
+      app_id: PRIVY_APP_ID as string,
+      verification_key: PRIVY_VERIFICATION_KEY as string,
+    });
 
-  return userId;
+    return userId;
+  } catch (error) {
+    // TEMPORARY -- instrumentation for the production 401. Remove once the
+    // cause is identified; this must not survive into a real deployment.
+    //
+    // Never logs the key. In @privy-io/node 0.28.0 (lib/auth.mjs) the string
+    // branch calls jose's importSPKI OUTSIDE mapAndThrowJoseErrors, so:
+    //   errorName !== 'InvalidAuthTokenError'  -> the KEY failed to import
+    //   errorName === 'InvalidAuthTokenError'  -> the TOKEN failed to verify
+    //     ('Authentication token expired' | 'Authentication token is invalid'
+    //      | 'Failed to verify authentication token' | "Token's payload is
+    //      invalid")
+    // An InvalidAuthTokenError with a well-formed key points at a key/app
+    // mismatch -- verifyAccessToken checks `audience: appId`, so a key from a
+    // different Privy app fails the signature check cleanly.
+    const key = PRIVY_VERIFICATION_KEY as string;
+    console.error("[verify-session] verification failed:", {
+      errorName: error instanceof Error ? error.constructor.name : typeof error,
+      errorMessage:
+        error instanceof Error
+          ? error.message.slice(0, 200)
+          : String(error).slice(0, 200),
+      keyLength: key.length,
+      keyHasRealNewline: key.includes("\n"),
+      keyHasEscapedNewline: key.includes("\\n"),
+      keyStartsWithPemHeader: key.startsWith("-----BEGIN"),
+      keyEndsWithPemFooter: key.trimEnd().endsWith("-----"),
+      appId: PRIVY_APP_ID,
+      tokenLength: accessToken.length,
+    });
+    throw error;
+  }
 }
