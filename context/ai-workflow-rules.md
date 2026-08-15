@@ -148,7 +148,7 @@ cases were never distinguishable at the boundary being tested.
 ## Handing Over Commands in Chat
 
 A command handed over in chat has to survive a copy/paste into a real
-zsh session. Four separate constructs have now failed that trip, each
+zsh session. Five separate constructs have now failed that trip, each
 costing a round-trip, so this is a standing rule rather than a habit:
 
 - **Single unbroken lines.** No backslash line continuations -- they
@@ -184,6 +184,16 @@ costing a round-trip, so this is a standing rule rather than a habit:
   control. The control is a gap: write the value, verify it (`wc -c`,
   `grep -c`), and only then run the command that consumes it, as a
   separate paste. A chain removes the operator's chance to stop.
+
+- **Never hand over a paste immediately after a command that opens a
+  pager.** `git diff`, `git log`, and `psql` without `| cat` all page
+  through `less`, and `less` swallows whatever is pasted next -- the
+  shell never sees it. Three commands vanished this way in a single
+  session; worse, one of them (`git commit` followed by `git push`)
+  had actually succeeded off-screen, so the next check was read as
+  "the work never happened" when it had landed. Suffix `| cat` on
+  anything that might page, and treat a command that produces no
+  visible effect after a pager as unrun rather than failed.
 
 Corollary for the far side: when a pasted command produces an odd local
 error, check whether it is a paste artifact before treating it as a
