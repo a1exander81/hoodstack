@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAccount, useBalance, useSwitchChain } from "wagmi";
 import { robinhoodChainTestnet, bscTestnet } from "@/lib/chains";
@@ -89,6 +90,14 @@ export default function Home() {
               BSC Testnet
             </button>
           </div>
+
+          <Link
+            href="/games/coinflip"
+            prefetch={false}
+            className="mt-2 block rounded-md border border-border-default px-3 py-2 text-center text-xs transition hover:border-accent-primary hover:text-accent-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
+          >
+            Play Coinflip
+          </Link>
 
           <button onClick={logout} className="pt-2 text-xs text-text-muted underline">
             Log out
