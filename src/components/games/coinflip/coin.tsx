@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { CoinSide } from "./dev-stubs";
+import type { CoinSide } from "@services/games";
 
 const FLIP_MS = 1400;
 const FULL_SPINS = 5;
@@ -13,6 +13,9 @@ const FULL_SPINS = 5;
  *
  * Rotation accumulates monotonically instead of resetting to 0/180, so
  * consecutive flips always spin forward rather than unwinding.
+ *
+ * The side it lands on is decided SERVER-side before this ever animates --
+ * the animation displays an outcome, it does not produce one.
  */
 export function Coin({
   side,
@@ -40,7 +43,7 @@ export function Coin({
     if (!flipping) return;
 
     setRotation((current) => {
-      const target = side === "heads" ? 0 : 180;
+      const target = side === "HEADS" ? 0 : 180;
       const spins = reducedMotion ? 0 : FULL_SPINS * 360;
       const base = Math.ceil((current + spins) / 360) * 360;
       return base + target;
@@ -65,7 +68,7 @@ export function Coin({
             : `transform ${FLIP_MS}ms cubic-bezier(0.2, 0.7, 0.2, 1)`,
         }}
         aria-live="polite"
-        aria-label={flipping ? "Flipping" : `Result: ${side}`}
+        aria-label={flipping ? "Flipping" : `Result: ${side.toLowerCase()}`}
       >
         <div className={`${faceBase} border-accent-primary bg-bg-surface text-accent-primary`}>
           Heads

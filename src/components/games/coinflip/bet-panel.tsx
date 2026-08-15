@@ -2,9 +2,14 @@
 
 import { useState } from "react";
 import { formatMicroUsd, parseUsdToMicro, MICRO_PER_USD } from "@/lib/format";
-import { payoutFor, type CoinSide } from "./dev-stubs";
+import { COINFLIP_PAYOUT_BPS, type CoinSide } from "@services/games";
 
 const QUICK_AMOUNTS = [1n, 5n, 25n, 100n].map((usd) => usd * MICRO_PER_USD);
+
+/** Display-only preview. The authoritative payout is computed server-side. */
+function previewPayout(wagerMicroUsd: bigint): bigint {
+  return (wagerMicroUsd * COINFLIP_PAYOUT_BPS) / 10_000n;
+}
 
 export function BetPanel({
   balanceMicroUsd,
@@ -16,7 +21,7 @@ export function BetPanel({
   onFlip: (wagerMicroUsd: bigint, side: CoinSide) => void;
 }) {
   const [amountText, setAmountText] = useState("1.00");
-  const [side, setSide] = useState<CoinSide>("heads");
+  const [side, setSide] = useState<CoinSide>("HEADS");
 
   const parsed = parseUsdToMicro(amountText);
   const malformed = parsed === null;
@@ -96,13 +101,13 @@ export function BetPanel({
       <div className="flex flex-col gap-2">
         <p className="text-xs uppercase tracking-wider text-text-muted">Pick a side</p>
         <div className="grid grid-cols-2 gap-2">
-          {(["heads", "tails"] as const).map((option) => (
+          {(["HEADS", "TAILS"] as const).map((option) => (
             <button
               key={option}
               type="button"
               onClick={() => setSide(option)}
               aria-pressed={side === option}
-              className={`rounded-md border px-3 py-2 capitalize ${
+              className={`rounded-md border px-3 py-2 lowercase first-letter:uppercase ${
                 side === option
                   ? "border-accent-primary bg-accent-primary/10 text-text-primary"
                   : "border-border-default text-text-muted hover:text-text-primary"
@@ -116,7 +121,7 @@ export function BetPanel({
 
       <div className="flex items-baseline justify-between text-sm">
         <span className="text-text-muted">Wins</span>
-        <span className="font-mono">{valid ? formatMicroUsd(payoutFor(parsed)) : "\u2014"}</span>
+        <span className="font-mono">{valid ? formatMicroUsd(previewPayout(parsed)) : "\u2014"}</span>
       </div>
 
       <button
