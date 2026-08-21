@@ -87,6 +87,21 @@
    a shared, round-level commitment (Crash). Both require the
    commitment to exist before the bet; neither requires the seed to be
    revealed before payout.
+
+   Crash's two-phase settlement (`placeCrashBet`/`settleCrashBet`) is a
+   deliberate exception to "tied to a settled round" for exactly one
+   side of the ledger: the `WAGER` debit happens at `placeCrashBet`
+   time, against a `CrashBet` that is only PLACED, not yet resolved --
+   the round it belongs to must already have a published commitment and
+   be open for betting, but settlement (and any `PAYOUT`) genuinely
+   happens later, from a separate call. This does not weaken the
+   invariant: the debit is still gated on an open, committed round
+   (`placeCrashBet` row-locks `CrashRound` and rejects anything not
+   BETTING), and no credit is ever issued except through
+   `settleCrashBet`'s own settled resolution. Coinflip/Mines/Roulette
+   have no equivalent pre-settlement mutation -- `settleInstantRound`
+   debits and credits in the same transaction, so this exception is
+   Crash-specific.
 2. The client is never trusted for game outcomes. Randomness uses a
    seed-pair commit/reveal scheme: a server seed is generated and its
    SHA-256 hash published to the player *before* any bet against that

@@ -18,13 +18,41 @@ export class RoundNotOpenForBettingError extends Error {
   }
 }
 
-function isUniqueConstraintError(err: unknown): boolean {
+/**
+ * Narrowly matches the specific CrashBet unique-constraint violation --
+ * not just any P2002. This function's caller only rescues the specific
+ * duplicate-bet case and rethrows everything else, rather than treating
+ * every P2002 in the transaction as if it meant the same thing.
+ *
+ * Matched on `meta.modelName === 'CrashBet'`, NOT `meta.target` field
+ * names -- checked directly against a real duplicate insert under this
+ * project's actual Prisma 7.9.1 + @prisma/adapter-pg combination:
+ * `meta` here is `{ modelName: 'CrashBet', driverAdapterError: ... }`,
+ * with no `target` array at all. `CrashBet` has exactly one unique
+ * constraint (`@@unique([crashRoundId, userId])`), so `modelName` alone
+ * is unambiguous for this model; do not port a `meta.target`-based
+ * check from documentation or from another Prisma/driver combination
+ * without re-confirming against a real error object first.
+ */
+function isCrashBetDuplicateError(err: unknown): boolean {
   return (
     typeof err === 'object' &&
     err !== null &&
-    'code' in err &&
-    (err as { code?: unknown }).code === 'P2002'
+    (err as { code?: unknown }).code === 'P2002' &&
+    (err as { meta?: { modelName?: unknown } }).meta?.modelName === 'CrashBet'
   );
+}
+
+export class DuplicateBetWagerMismatchError extends Error {
+  constructor(
+    readonly existingWagerMicroUsd: bigint,
+    readonly requestedWagerMicroUsd: bigint,
+  ) {
+    super(
+      `a bet already exists for this round at a different wager (existing: ${existingWagerMicroUsd}, requested: ${requestedWagerMicroUsd})`,
+    );
+    this.name = 'DuplicateBetWagerMismatchError';
+  }
 }
 
 export type PlaceCrashBetResult = {
@@ -48,7 +76,11 @@ export type PlaceCrashBetResult = {
  * Idempotent via CrashBet's existing `@@unique([crashRoundId, userId])`
  * -- a retried call for a bet already placed returns the existing bet
  * rather than a second WAGER row, the same shape as
- * GameRound/settleInstantRound's nonce-based idempotency.
+ * GameRound/settleInstantRound's nonce-based idempotency. A retry at a
+ * DIFFERENT wager amount is not treated as the same idempotent retry --
+ * see DuplicateBetWagerMismatchError below -- since silently reporting
+ * success for a different amount than what was actually recorded would
+ * hide a real caller bug behind a happy-looking response.
  */
 export async function placeCrashBet(input: PlaceCrashBetInput): Promise<PlaceCrashBetResult> {
   const parsed = placeCrashBetInputSchema.parse(input);
@@ -102,13 +134,18 @@ export async function placeCrashBet(input: PlaceCrashBetInput): Promise<PlaceCra
       };
     });
   } catch (err) {
-    if (!isUniqueConstraintError(err)) throw err;
+    if (!isCrashBetDuplicateError(err)) throw err;
 
     const existing = await prisma.crashBet.findUniqueOrThrow({
       where: {
         crashRoundId_userId: { crashRoundId: parsed.crashRoundId, userId: parsed.userId },
       },
     });
+
+    if (existing.wagerMicroUsd !== parsed.wagerMicroUsd) {
+      throw new DuplicateBetWagerMismatchError(existing.wagerMicroUsd, parsed.wagerMicroUsd);
+    }
+
     const after = await prisma.ledgerEntry.aggregate({
       where: { userId: parsed.userId },
       _sum: { amountMicroUsd: true },
@@ -210,9 +247,11 @@ export async function settleCrashBet(input: SettleCrashBetInput): Promise<Settle
       // in the data, not indistinguishable from an ordinary loss --
       // same posture reconcile-deposit.ts takes toward its own
       // silent-failure surface.
+      // crashBetId/crashRoundId are enough to identify the event and
+      // look up the DID from the database if needed -- the raw
+      // identifier doesn't need to sit in an error log at rest.
       console.error('[settleCrashBet] rejected cashout at/past crash point:', {
         crashBetId: bet.id,
-        userId: parsed.userId,
         crashRoundId: parsed.crashRoundId,
         crashMultiplierBps: parsed.crashMultiplierBps,
         cashoutMultiplierBps: parsed.cashoutMultiplierBps,
@@ -223,7 +262,12 @@ export async function settleCrashBet(input: SettleCrashBetInput): Promise<Settle
       where: { id: bet.id },
       data: {
         status: won ? 'CASHED_OUT' : 'LOST',
-        cashoutMultiplierBps: parsed.cashoutMultiplierBps,
+        // Only a genuine win records a cashout multiplier. A rejected
+        // claim (won === false with a non-null cashoutMultiplierBps,
+        // logged above) must not persist that value against a LOST
+        // bet -- doing so would make a defensively-rejected claim
+        // indistinguishable from a real recorded cashout attempt.
+        cashoutMultiplierBps: won ? parsed.cashoutMultiplierBps : null,
         payoutMicroUsd: resolution.payoutMicroUsd,
         resolvedAt: new Date(),
       },
