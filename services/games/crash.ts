@@ -42,8 +42,11 @@ const MAX_CRASH_MULTIPLIER_BPS = 1_000_000_000; // 100,000.00x
  * c > 1.00x -- a uniform 1% edge against any cashout target, not just
  * Coinflip-style even-money bets. Floored to the nearest basis point,
  * never rounded, so the edge is never given back by rounding in the
- * player's favor. Verified over ~200k simulated draws in
- * scripts/verify-crash.ts, the same rigor services/rng's derivation got.
+ * player's favor. Verified over ~200k simulated draws against a
+ * disposable script (deleted after use, per this project's convention
+ * for scripts/verify-*.ts -- see progress-tracker.md's Completed
+ * section for the actual pass/fail record), the same rigor
+ * services/rng's derivation got.
  */
 export function deriveCrashPoint(float: number): number {
   if (!(float >= 0 && float < 1)) {
@@ -69,19 +72,40 @@ export function deriveCrashPoint(float: number): number {
  * crash point is the moment the round busts, not a valid escape from it.
  * This function is the single authority for that check; it does not
  * trust a caller-supplied "won" flag any more than resolveCoinflip
- * trusts a caller-supplied outcome.
+ * trusts a caller-supplied outcome -- which means it must not trust a
+ * caller-supplied MULTIPLIER either. `deriveCrashPoint` validates its
+ * own input; this function is equally reachable with bad data (a
+ * corrupted cash-out record, a caller bug) and must defend itself the
+ * same way, not assume its inputs already went through that function.
  */
 export function resolveCrashBet(
   crashMultiplierBps: number,
   cashoutMultiplierBps: number | null,
   wagerMicroUsd: bigint,
 ): RoundResolution {
+  if (!Number.isInteger(crashMultiplierBps) || crashMultiplierBps < BPS_PER_UNIT) {
+    throw new Error(
+      `crashMultiplierBps must be an integer >= ${BPS_PER_UNIT}, got ${crashMultiplierBps}`,
+    );
+  }
+  if (
+    cashoutMultiplierBps !== null &&
+    (!Number.isInteger(cashoutMultiplierBps) || cashoutMultiplierBps < BPS_PER_UNIT)
+  ) {
+    throw new Error(
+      `cashoutMultiplierBps must be an integer >= ${BPS_PER_UNIT}, got ${cashoutMultiplierBps}`,
+    );
+  }
+  if (wagerMicroUsd < 0n) {
+    throw new Error(`wagerMicroUsd must be non-negative, got ${wagerMicroUsd}`);
+  }
+
   const won = cashoutMultiplierBps !== null && cashoutMultiplierBps < crashMultiplierBps;
 
   return {
     outcome: { crashMultiplierBps, cashoutMultiplierBps, won },
     payoutMicroUsd: won
-      ? (wagerMicroUsd * BigInt(cashoutMultiplierBps as number)) / BigInt(BPS_PER_UNIT)
+      ? (wagerMicroUsd * BigInt(cashoutMultiplierBps)) / BigInt(BPS_PER_UNIT)
       : 0n,
   };
 }
