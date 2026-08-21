@@ -3,55 +3,55 @@
 ## Current Phase
 
 - **Most recent state (read this first; every bullet below predates
-  it).** Crash's build has started, under a 4-milestone plan agreed
-  with the person before any code: Milestone 0 (docs decision, merged
-  direct to `main` as `4ab0b64`) records why Crash needs a house-level,
-  round-scoped commitment instead of the existing per-user `SeedPair`
-  model -- a shared crash point cannot be a function of any one
-  player's client seed without giving that player collusion power over
-  everyone else in the round, so client seed is deliberately inert for
-  this one game, amending `architecture.md` invariants 1 and 2 together
-  (the RNG PR's own precedent for why both must move in the same pass).
-  Milestone 1 (schema + pure resolver, PR #19, `875265b`, open --
-  branch `feat/crash-round-model`) adds `CrashRound` (house commitment,
-  per-round reveal since Crash's client seed is inert, so unlike
-  `SeedPair` there is no cost to revealing per round) and `CrashBet`
-  (two-phase: PLACED at bet time, CASHED_OUT/LOST once the round
-  resolves -- `GameRound` has no equivalent pending state, confirmed by
-  reading `settle-round.ts` directly: it is single-shot, one
-  transaction, fully-formed at insert). `LedgerEntry` gets a new
-  nullable `crashBetId` FK with explicit `onDelete: Restrict` --
-  confirmed against the real generated migration SQL, not assumed,
-  since this project already hit Prisma's `SET NULL` default as a real
-  bug once. `services/games/crash.ts`'s `deriveCrashPoint`/
-  `resolveCrashBet` are pure, verified via a disposable
-  `scripts/verify-crash.ts` (deleted after use): ~200k simulated draws
-  confirmed the recorded 1% instant-bust rate and a ~0.99 expected
-  return across six cashout targets (2x-20x), plus boundary/unit cases
-  and two live-Postgres delete-restrict checks. `npm run build` passes.
-  Milestones 2-4 (two-phase ledger entry point, the real-time round
-  engine, the Crash page UI) are NOT started -- see Next Up.
+  it).** Crash's build continues under the same 4-milestone plan.
+  Milestone 1 (schema + pure resolver) MERGED as `7a4cb74` (PR #19,
+  squashed) -- `CrashRound`/`CrashBet` models and
+  `services/games/crash.ts`'s `deriveCrashPoint`/`resolveCrashBet` are
+  now on `main`. CodeRabbit's real review (triggered manually -- this
+  repo is under 10 stars, so it does not auto-review, see Session
+  Notes) found one genuine gap before merge: `resolveCrashBet` --
+  documented as "the single authority" for win/loss -- trusted its
+  inputs while `deriveCrashPoint` validated its own. Fixed in `672fa5b`
+  before merging: now rejects non-integer or sub-1.00x multipliers and
+  negative wagers, re-verified with 5 new cases (24/24 total). A second
+  finding (dangling `scripts/verify-crash.ts` filename reference in a
+  docstring, since that script is deleted after use by convention) was
+  also fixed. A third finding ("no progress-tracker.md update in this
+  PR's diff") was correctly NOT actionable -- docs commits go direct to
+  `main` per this project's own git-path rule, already done separately.
 
-  In the same session, a UI/UX research pass (independent of Crash)
-  audited the live login page, the real Coinflip UI, and the unported
-  landing mockup against current casino/fintech practice, and its quick
-  wins shipped as PR #20 (`c83aa5c`, open -- branch
-  `fix/coinflip-ui-quick-wins`): on-brand login hero copy replacing
-  hype-y "Your fortune awaits!" language; the debug wallet panel's raw
-  address/chain-ID/balance now collapsed behind an `<details>`
-  "Advanced" disclosure per `ui-context.md`'s Wallet Drawer pattern;
-  round history now shows each round's nonce and a working copy button
-  on the seed commitment hash; losses show their real signed amount in
-  muted tone instead of reusing `state-error` red for a normal outcome;
-  the bet panel is now sticky to the viewport bottom on mobile, actually
-  implementing `ui-context.md`'s own "fixed ... or bottom on mobile"
-  spec rather than just reordering below the coin. All verified live
-  against a real signed-in dev session, not just the build: two real
-  Coinflip rounds settled (one win at nonce #5, one loss at nonce #4)
-  during verification, confirming both the round-history styling and
-  that the whole wager path still works end to end. Neither PR is
-  merged yet -- both await CodeRabbit per this project's standing
-  git-path rule.
+  Milestone 2 (two-phase `services/ledger` entry point, PR #21, open --
+  branch `feat/crash-ledger-entrypoint`) adds `placeCrashBet()` (debits
+  the wager, row-locks `CrashRound` first so a bet can never land after
+  betting closes) and `settleCrashBet()` -- ONE function for both a live
+  cash-out and the round-end loss sweep, both funneling through
+  `resolveCrashBet` so a cash-out is never simply trusted as a win.
+  Row-locks the specific `CrashBet` to close the real race this
+  milestone had to design: a cash-out tap landing at the same instant
+  the round crashes -- whichever transaction commits first wins, the
+  other gets the already-settled result back. Also corrected a
+  Milestone-1 schema comment in the same PR: `crashMultiplierBps` being
+  null until `CRASHED` is an API-exposure safety net, not evidence the
+  system doesn't know the value sooner -- the round engine (Milestone
+  3, not yet built) computes and holds it privately from round start,
+  passed to `settleCrashBet` as a parameter, same posture
+  `services/rng` already takes toward an active `SeedPair`'s
+  `serverSeed`. Verified via a disposable `scripts/verify-crash-ledger.ts`
+  (deleted after use): 18 checks against real local Postgres --
+  idempotency on both functions, insufficient-balance and
+  round-not-open rejections leaving no orphan rows, win/loss/defensive-
+  rejection paths, and a best-effort concurrent cash-out-vs-sweep check
+  (`Promise.allSettled` can't guarantee overlap in Postgres, recorded
+  honestly rather than claimed as proof, matching PR #14's own
+  precedent). `npm run build` passes.
+
+  PR #20 (UI quick wins, independent of Crash) is still open --
+  CodeRabbit's free-tier per-developer review limit was hit triggering
+  it, and re-triggering after the stated cooldown has so far produced
+  no response either way; still pending as of this writing.
+
+  Milestones 3-4 (the real-time round engine, the Crash page UI) are
+  NOT started -- see Next Up.
 
 - **Prior state, superseded by the bullet above.** Production's 401 is
   RESOLVED, confirmed live, not just inferred from the commit trail.
@@ -187,24 +187,33 @@
 
 ## Current Goal
 
-- **The next unit is Crash Milestone 2: the two-phase `services/ledger`
-  entry point.** `placeCrashBet()` (debit the wager, insert a `CrashBet`
-  row as PLACED, one transaction under the same per-user advisory lock
-  `settleInstantRound` uses) and `resolveCrashBet()` (credit on
-  cash-out, or mark LOST with no credit on bust -- a second, later
-  transaction). This is the first Crash unit that touches
-  `services/ledger/*` itself rather than only adding new schema next to
-  it, so branch -> PR -> CodeRabbit is required without exception, not
-  just recommended. New invariant to actually design here, not just
-  schema: a lock closing the race between a player's cash-out tap and
-  the round crashing at the same instant -- the existing per-user
-  advisory lock does not cover this, since it is a race against a
-  round's clock, not against the same user's own concurrent requests.
-  Milestones 1 (PR #19) and the independent UI quick-wins (PR #20) are
-  both open, unmerged, awaiting CodeRabbit -- do not start Milestone 2
-  by branching off an unmerged Milestone 1; wait for #19 to land on
-  `main` first, or Milestone 2's branch will carry Milestone 1's diff
-  as its own.
+- **The next unit is Crash Milestone 3: the real-time round engine.**
+  Milestone 2 (PR #21) is built, verified, and open, branched cleanly
+  off `main` after Milestone 1 (PR #19) merged -- do not repeat that
+  mistake in reverse: don't start Milestone 3 by branching off an
+  unmerged Milestone 2. A standalone server on `facilitator/`'s template
+  (own `package.json`, `tsx`-run, hard-fail env validation) hosting
+  Socket.io -- nothing real-time is installed anywhere in the repo
+  today (confirmed by grepping `package.json`/`package-lock.json`/
+  `node_modules` end to end; `architecture.md`'s "Socket.io"/"Redis
+  (ioredis)" lines are aspirational stack docs only). Recommend
+  verifying it as a local `tsx`-run process first, deploying only once
+  proven -- exactly how the facilitator itself was built, and the
+  facilitator STILL has never been deployed anywhere despite a VPS
+  user/SSH key existing (Hostinger; no domain purchased). Concretely,
+  this milestone must: generate a fresh `CrashRound` (server seed +
+  hash, `deriveCrashPoint` from the committed float) and hold the crash
+  point PRIVATELY in the engine's own memory/state from round start
+  (never written to `CrashRound.crashMultiplierBps` until the round
+  actually crashes -- see that column's corrected schema comment);
+  drive `BETTING -> RUNNING -> CRASHED` transitions via the same
+  guarded compare-and-swap `UPDATE ... WHERE status = <expected>` shape
+  Milestone 2's verification script used, not a bare update; broadcast
+  the commitment before betting opens and the live multiplier while
+  running; call `placeCrashBet()`/`settleCrashBet()` at the right
+  moments; and authenticate the socket connection via a
+  socket-adapted `resolveAuthenticatedDid` (transport-agnostic already;
+  reconnect/expiry handling is new, not new Privy plumbing).
 
 - **RESOLVED -- production's 401 is fixed and confirmed live.** The
   hypothesis this section previously flagged as UNCONFIRMED --
@@ -282,9 +291,31 @@
 
 ## Completed
 
-- **Crash Milestone 0 + 1 built (PR #19 open, not yet merged) and an
-  independent UI/UX quick-wins pass shipped (PR #20 open, not yet
-  merged).** Full detail in Current Phase above; summary with the
+- **Crash Milestone 1 merged (`7a4cb74`) after CodeRabbit's real review
+  found and this session fixed a genuine gap, and Milestone 2 built and
+  opened as PR #21.** `resolveCrashBet` trusted its own inputs while
+  `deriveCrashPoint` validated its -- fixed (`672fa5b`) to reject
+  non-integer/sub-1.00x multipliers and negative wagers before merging,
+  re-verified 24/24. Milestone 2 (`feat/crash-ledger-entrypoint`,
+  `fb95d2a`, PR #21): `placeCrashBet()` and a unified `settleCrashBet()`
+  (one function for both a live cash-out and the round-end loss sweep),
+  each row-locking the specific `CrashRound`/`CrashBet` to close the
+  real races involved (a bet landing after betting closes; a cash-out
+  racing the round's own crash) -- no new advisory-lock scheme needed,
+  a per-row `FOR UPDATE` closes both. Also corrected Milestone 1's
+  `crashMultiplierBps` schema comment: null-until-CRASHED is an
+  API-exposure safety net, not evidence the system doesn't know the
+  crash point sooner -- the round engine holds it privately from round
+  start. Verified via a disposable `scripts/verify-crash-ledger.ts`
+  (deleted after use): 18/18 checks against real local Postgres,
+  including a best-effort concurrent cash-out-vs-sweep test honestly
+  caveated (`Promise.allSettled` doesn't guarantee overlap). `npm run
+  build` passes. PR #21 open, awaiting CodeRabbit.
+
+- **Crash Milestone 0 + 1 built (superseded above once Milestone 1
+  merged) and an independent UI/UX quick-wins pass shipped (PR #20,
+  still open -- see Session Notes cont. 17 for the CodeRabbit rate-limit
+  snag).** Full detail in Current Phase above; summary with the
   commit/PR references for quick lookup:
   - Milestone 0 (docs decision, `4ab0b64`, merged direct to `main`):
     `architecture.md` invariants 1+2 amended to describe Crash's
@@ -1411,19 +1442,29 @@
     revisiting once more games exist -- a real per-game lobby is not
     built yet.
 
-17. **Merge PR #19 (Crash Milestone 1) and PR #20 (UI quick wins)
-    through CodeRabbit.** Both are open, unmerged, on separate branches
-    (`feat/crash-round-model`, `fix/coinflip-ui-quick-wins`) as of this
-    session's end. Milestone 2 depends on #19 landing first -- branching
-    for it off an unmerged Milestone 1 would carry that diff along.
+17. DONE -- **Merged PR #19 (Crash Milestone 1)**, `672fa5b` -> squashed
+    as `7a4cb74`. CodeRabbit's real review (had to be manually
+    triggered -- see Session Notes) found and this session fixed a
+    genuine gap in `resolveCrashBet`'s own input validation before
+    merge; see Current Phase for detail.
 
-18. **Crash Milestone 2: two-phase `services/ledger` entry point.**
-    `placeCrashBet()` / `resolveCrashBet()` -- see Current Goal above
-    for the new cash-out-vs-crash race this needs a lock for, beyond the
-    existing per-user advisory lock. Branch -> PR -> CodeRabbit required
-    (touches `services/ledger/*`).
+18. **Merge PR #21 (Crash Milestone 2) and PR #20 (UI quick wins)
+    through CodeRabbit.** #21 built and verified this session (branch
+    `feat/crash-ledger-entrypoint`), CodeRabbit review requested. #20 has
+    been stuck on CodeRabbit's free-tier per-developer rate limit for
+    longer than its own stated cooldown -- re-triggering after the
+    limit's stated reset time produced no response either way as of this
+    writing; may need the person's own GitHub session to check
+    directly, or another wait-and-retry. Milestone 3 depends on #21
+    landing first -- do not branch for it off an unmerged Milestone 2.
 
-19. **Crash Milestone 3: the real-time round engine.** A standalone
+19. DONE -- **Crash Milestone 2: two-phase `services/ledger` entry
+    point.** `placeCrashBet()` / `settleCrashBet()` built and verified
+    (18/18 checks); see Current Phase for the race-closing design (a
+    per-bet row lock, not a new advisory-lock scheme) and what's still
+    open (PR #21 unmerged).
+
+20. **Crash Milestone 3: the real-time round engine.** A standalone
     server on `facilitator/`'s template (own `package.json`, `tsx`-run,
     hard-fail env validation) hosting Socket.io -- nothing real-time is
     installed anywhere in the repo today (`architecture.md`'s
@@ -1438,7 +1479,7 @@
     itself is transport-agnostic already; reconnect/expiry handling is
     new, not new Privy plumbing).
 
-20. **Crash Milestone 4: the Crash page UI.** Reuses Coinflip's existing
+21. **Crash Milestone 4: the Crash page UI.** Reuses Coinflip's existing
     3-column layout. Decide up front how to avoid repeating item 15's
     `usePrivy` bundle-bloat regression rather than shipping it a second
     time. Manual AND auto-cashout target from day one; cash-out as the
@@ -2379,3 +2420,29 @@ degrades. Reject any provider that cannot satisfy this.
   time, the fix is probably "run the closing ritual per commit that
   touches `Current Phase`/`Current Goal`-relevant code, not per
   session."
+
+## Session Notes (cont. 17)
+
+- **CodeRabbit does not auto-review this repo, and assuming it had was
+  wrong.** The ai-workflow-rules.md git-path rule says "Branch -> PR ->
+  CodeRabbit, without exception" for money-adjacent paths, and a green
+  `CodeRabbit: SUCCESS` status check on PR #19/#20 looked like that had
+  happened. Reading the actual PR comment (not just the status check)
+  showed CodeRabbit had posted "This repository does not receive
+  automatic reviews because it has fewer than 10 stars" and never
+  actually reviewed anything -- the SUCCESS status was CodeRabbit
+  acknowledging the webhook, not completing a review. Fixed by
+  commenting `@coderabbitai review` manually on each PR, which DID
+  trigger a real review (PR #19's found a genuine input-validation gap,
+  see Completed). General lesson: a green status check name is not
+  itself evidence of what ran -- read what the bot actually said.
+- **CodeRabbit's free-tier per-developer review limit can outlast its
+  own stated cooldown.** Triggering PR #20's review hit "you've reached
+  your PR review limit... next review available in 59 minutes."
+  Re-triggering after that window (and considerably longer -- checked
+  again ~6 hours later in wall-clock time) produced no response at all,
+  neither a fresh rate-limit message nor a real review -- just silence
+  on the new `@coderabbitai review` comment. Left genuinely unresolved
+  as of this session's end; worth checking directly on GitHub's UI
+  rather than assuming the CLI/API view is complete, next time this
+  comes up.
