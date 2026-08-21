@@ -125,7 +125,16 @@ export function CoinflipGame() {
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-8 lg:grid lg:grid-cols-[320px_1fr_300px] lg:items-start">
-      <div className="order-2 lg:order-1">
+      {/*
+        ui-context.md's Layout Patterns spec calls for the bet panel
+        "fixed ... or bottom on mobile" -- until now this div was only
+        reordered below the coin, not actually fixed, so a first-time
+        mobile visitor had to scroll past a 256px coin to reach the
+        wager input. `sticky bottom-0` pins it to the viewport bottom
+        as the page scrolls, matching the documented pattern without a
+        full bottom-sheet redesign.
+      */}
+      <div className="order-2 sticky bottom-0 z-10 -mx-4 bg-bg-base/95 px-4 pb-4 backdrop-blur lg:static lg:order-1 lg:mx-0 lg:bg-transparent lg:p-0 lg:backdrop-blur-none">
         {balanceMicroUsd === null ? (
           <div className="rounded-xl border border-border-default bg-bg-surface p-5 text-sm text-text-muted">
             Loading your table balance&hellip;

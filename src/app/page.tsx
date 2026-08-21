@@ -33,8 +33,8 @@ export default function Home() {
             <h1 className="text-5xl font-semibold tracking-tight sm:text-6xl">
               Hoodstack
             </h1>
-            <p className="text-sm tracking-[0.2em] text-text-muted uppercase">
-              Play · Vibe · Cash out
+            <p className="text-sm text-text-muted">
+              Fair games. Instant cash-out. Zero blockchain jargon.
             </p>
           </div>
 
@@ -42,7 +42,7 @@ export default function Home() {
             onClick={login}
             className="rounded-xl bg-accent-primary px-8 py-4 text-base font-semibold tracking-wide text-bg-base transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent-primary"
           >
-            ENTER HOODSTACK — Your fortune awaits!
+            Enter Hoodstack
           </button>
         </div>
       ) : (
@@ -53,43 +53,6 @@ export default function Home() {
               {user?.email?.address ?? user?.id}
             </span>
           </p>
-          <p>
-            Wallet:{" "}
-            <span className="font-mono text-xs text-text-muted">
-              {address ?? "provisioning…"}
-            </span>
-          </p>
-          <p>
-            Network:{" "}
-            <span className="text-text-muted">
-              {chainId === robinhoodChainTestnet.id
-                ? "Robinhood Chain Testnet"
-                : chainId === bscTestnet.id
-                ? "BSC Testnet"
-                : chainId ?? "—"}
-            </span>
-          </p>
-          <p>
-            Balance:{" "}
-            <span className="text-text-muted">
-              {balance ? `${balance.formatted} ${balance.symbol}` : "—"}
-            </span>
-          </p>
-
-          <div className="flex gap-2 pt-2">
-            <button
-              onClick={() => switchChain({ chainId: robinhoodChainTestnet.id })}
-              className="rounded-md border border-border-default px-3 py-1.5 text-xs"
-            >
-              Robinhood Chain
-            </button>
-            <button
-              onClick={() => switchChain({ chainId: bscTestnet.id })}
-              className="rounded-md border border-border-default px-3 py-1.5 text-xs"
-            >
-              BSC Testnet
-            </button>
-          </div>
 
           <Link
             href="/games/coinflip"
@@ -98,6 +61,58 @@ export default function Home() {
           >
             Play Coinflip
           </Link>
+
+          {/*
+            ui-context.md's Wallet Drawer pattern: blockchain details
+            (address, chain, tx hash) are exposed only behind an
+            "Advanced" toggle. This debug page previously showed raw
+            wallet address, chain ID, and native-token balance by
+            default, ahead of any real wallet drawer -- collapsed here
+            so it matches the documented pattern rather than
+            contradicting it while it's still the first thing a signed-in
+            visitor sees.
+          */}
+          <details className="pt-2 text-xs text-text-muted">
+            <summary className="cursor-pointer select-none">Advanced</summary>
+            <div className="mt-2 space-y-2">
+              <p>
+                Wallet:{" "}
+                <span className="font-mono text-xs">
+                  {address ?? "provisioning…"}
+                </span>
+              </p>
+              <p>
+                Network:{" "}
+                <span>
+                  {chainId === robinhoodChainTestnet.id
+                    ? "Robinhood Chain Testnet"
+                    : chainId === bscTestnet.id
+                    ? "BSC Testnet"
+                    : chainId ?? "—"}
+                </span>
+              </p>
+              <p>
+                Balance:{" "}
+                <span>
+                  {balance ? `${balance.formatted} ${balance.symbol}` : "—"}
+                </span>
+              </p>
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={() => switchChain({ chainId: robinhoodChainTestnet.id })}
+                  className="rounded-md border border-border-default px-3 py-1.5"
+                >
+                  Robinhood Chain
+                </button>
+                <button
+                  onClick={() => switchChain({ chainId: bscTestnet.id })}
+                  className="rounded-md border border-border-default px-3 py-1.5"
+                >
+                  BSC Testnet
+                </button>
+              </div>
+            </div>
+          </details>
 
           <button onClick={logout} className="pt-2 text-xs text-text-muted underline">
             Log out
