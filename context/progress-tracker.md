@@ -2225,3 +2225,22 @@ degrades. Reject any provider that cannot satisfy this.
   once for a `grep` whose `&&` chain had short-circuited. Checking
   WHEN output was produced relative to the action it supposedly
   measures is the same habit cont. 13 already names.
+
+## Session Notes (cont. 16)
+
+- **The closing ritual was run (`c865932`), and then four more real
+  commits landed (`92ad8d7`, `4902ffc`, `95dd403`, `4c5962a`) without a
+  second pass.** `progress-tracker.md`'s "most recent state" kept
+  saying production was broken and nothing linked to Coinflip for a
+  week of wall-clock time after both were actually fixed, purely
+  because the ritual only ran once, before that follow-up work
+  happened. Caught this session by treating the tracker as a claim to
+  verify against git log and live logs, not as ground truth by default
+  -- the same posture `ai-workflow-rules.md` already asks for toward
+  third-party SDK behavior, just not yet written down for the tracker
+  itself. First occurrence of this specific shape (ritual completed,
+  then more commits without a follow-up ritual pass), so logged here
+  rather than promoted to a standing rule -- if it recurs a second
+  time, the fix is probably "run the closing ritual per commit that
+  touches `Current Phase`/`Current Goal`-relevant code, not per
+  session."
