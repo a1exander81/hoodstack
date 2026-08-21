@@ -117,7 +117,20 @@ model CrashRound {
   serverSeed         String           // SECRET until revealedAt is set
   serverSeedHash     String           // published to all clients before betting opens
   status             CrashRoundStatus @default(BETTING)
-  crashMultiplierBps Int?             // set only once status = CRASHED; see services/games/crash.ts
+  // This column is the REVEALED, audit/display record, written once
+  // status = CRASHED -- it is NOT the system's only copy of the value
+  // and NOT something services/ledger reads through. The round engine
+  // (Milestone 3) computes the crash point from this round's committed
+  // float at round START (via services/games/crash.ts's
+  // deriveCrashPoint) and holds it privately for as long as the round
+  // is open, passing it directly to services/ledger's settleCrashBet
+  // as a parameter -- both for a live cash-out (crash point still
+  // secret from clients) and for the post-crash loss sweep (crash point
+  // now revealed here too). Null-until-CRASHED here is a defense against
+  // a careless route leaking it early, the same posture services/rng
+  // takes toward an active SeedPair's serverSeed -- not evidence that no
+  // part of the system knows the value sooner.
+  crashMultiplierBps Int?
   bettingClosedAt    DateTime?
   crashedAt          DateTime?
   revealedAt         DateTime?        // set once every bet against this round is resolved

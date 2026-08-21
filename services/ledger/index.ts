@@ -10,3 +10,7 @@ export type { Money } from './money';
 export { settleInstantRound, InsufficientBalanceError } from './settle-round';
 export type { SettleRoundResult } from './settle-round';
 export type { SettleRoundInput } from './round-schema';
+
+export { placeCrashBet, settleCrashBet, RoundNotOpenForBettingError } from './settle-crash-bet';
+export type { PlaceCrashBetResult, SettleCrashBetResult } from './settle-crash-bet';
+export type { PlaceCrashBetInput, SettleCrashBetInput } from './crash-schema';
