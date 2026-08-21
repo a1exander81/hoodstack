@@ -92,6 +92,14 @@ the zero pocket (1/37 = 2.70%), not from a haircut on the payout, so it
 cannot be set to 1% without changing the wheel itself. A double-zero
 American wheel would be 5.26%; European is the choice here.
 
+Crash is a shared round -- one crash point, many players, each cashing
+out independently -- not a per-player instant variant like Coinflip.
+That has a real consequence for provable fairness, recorded in
+`architecture.md` invariant 2: the crash point comes from a house-level
+commitment, not any individual player's client seed, since a shared
+outcome cannot be a function of one participant's private input without
+giving that player collusion power over everyone else in the round.
+
 Payouts are quoted as **total return including the stake**, not profit.
 A winning 1.00 Coinflip wager returns 1.98 — recorded in the ledger as a
 -1.00 `WAGER` row and a +1.98 `PAYOUT` row, netting +0.98. Any UI that

@@ -80,7 +80,13 @@
    "revealed seed": under the seed-pair model in invariant 2 the raw
    server seed is not revealed until the pair is rotated, which is
    after settlement, so requiring a revealed seed at payout time
-   would forbid every payout.
+   would forbid every payout. "A settled game round" covers both
+   shapes described in invariant 2: a per-user `GameRound` settled
+   against that user's own seed pair (Coinflip, Mines, Roulette), and
+   a `CrashBet` resolved (by cash-out or by the round ending) against
+   a shared, round-level commitment (Crash). Both require the
+   commitment to exist before the bet; neither requires the seed to be
+   revealed before payout.
 2. The client is never trusted for game outcomes. Randomness uses a
    seed-pair commit/reveal scheme: a server seed is generated and its
    SHA-256 hash published to the player *before* any bet against that
@@ -106,6 +112,23 @@
    server seed sits in Postgres in plaintext until reveal. Read
    access to that database is equivalent to knowing every unsettled
    round's outcome. See `progress-tracker.md` Open Questions.
+
+   **Crash is a deliberate second case, not a variant of the above.**
+   A per-user seed pair cannot produce Crash's crash point: many
+   players share one round and therefore must share one outcome, and
+   if any single player's client seed fed that outcome, that player
+   could bias the round against everyone else in it. Crash's
+   commitment is instead round-scoped (`CrashRound`, not `SeedPair`):
+   a house-generated server seed whose hash is published to every
+   connected client before that round's betting window opens, with
+   the raw seed revealed only after the round fully resolves (every
+   bet cashed out or lost to the crash). The consequence stated
+   plainly, not left implicit: a player's own client seed has no
+   effect on a Crash round's outcome. This is the same category of
+   tradeoff as the per-round-reveal option rejected above -- a
+   feature (here, per-round player-influenced randomness) given up
+   for a mechanical reason (a shared outcome cannot be a function of
+   one participant's private input) -- not an oversight to fix later.
 3. An x402/Permit2 signature authorizes a specific amount and
    destination only; neither the facilitator nor the backend can
    alter either value.
