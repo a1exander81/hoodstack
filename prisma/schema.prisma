@@ -28,10 +28,13 @@ model LedgerEntry {
   txHash         String?         @unique // deposit idempotency key; null for game rounds
   gameRoundId    String?
   gameRound      GameRound?      @relation(fields: [gameRoundId], references: [id], onDelete: Restrict)
+  crashBetId     String?         // Crash's two-phase bet, distinct from gameRoundId's single-shot rounds
+  crashBet       CrashBet?       @relation(fields: [crashBetId], references: [id], onDelete: Restrict)
   createdAt      DateTime        @default(now())
 
   @@index([userId])
   @@index([gameRoundId])
+  @@index([crashBetId])
 }
 
 enum GameKind {
@@ -86,5 +89,67 @@ model GameRound {
   // a unique txHash: an app-level check-then-insert has a race window
   // under concurrent requests that a constraint does not.
   @@unique([seedPairId, nonce])
+  @@index([userId, createdAt])
+}
+
+enum CrashRoundStatus {
+  BETTING
+  RUNNING
+  CRASHED
+}
+
+enum CrashBetStatus {
+  PLACED
+  CASHED_OUT
+  LOST
+}
+
+/// A single round shared by many players -- one house-generated
+/// commitment, one crash point -- not a SeedPair. See architecture.md
+/// invariant 2's Crash addendum: a shared outcome cannot be a function
+/// of any one player's client seed, so this uses per-round reveal (one
+/// server seed per round, revealed once the round resolves) rather than
+/// SeedPair's one-seed-many-rounds-via-nonce model. That tradeoff only
+/// costs something for a game with a meaningful client seed; Crash's is
+/// deliberately inert, so it costs nothing here.
+model CrashRound {
+  id                 String           @id @default(cuid())
+  serverSeed         String           // SECRET until revealedAt is set
+  serverSeedHash     String           // published to all clients before betting opens
+  status             CrashRoundStatus @default(BETTING)
+  crashMultiplierBps Int?             // set only once status = CRASHED; see services/games/crash.ts
+  bettingClosedAt    DateTime?
+  crashedAt          DateTime?
+  revealedAt         DateTime?        // set once every bet against this round is resolved
+  createdAt          DateTime         @default(now())
+  bets               CrashBet[]
+
+  @@index([status])
+}
+
+/// One player's bet against a shared CrashRound. Two-phase, unlike
+/// GameRound: PLACED at bet time (the wager is already debited),
+/// CASHED_OUT or LOST only once the round resolves -- see
+/// services/ledger's placeCrashBet()/resolveCrashBet() (Milestone 2).
+/// payoutMicroUsd is nullable specifically to distinguish "not yet
+/// resolved" from "resolved as a loss" (0), a distinction GameRound
+/// never needs because it is only ever written fully-formed.
+model CrashBet {
+  id                   String         @id @default(cuid())
+  userId               String         // Privy DID
+  crashRoundId         String
+  crashRound           CrashRound     @relation(fields: [crashRoundId], references: [id])
+  wagerMicroUsd        BigInt
+  cashoutMultiplierBps Int?           // set only if the player cashed out before the crash
+  status               CrashBetStatus @default(PLACED)
+  payoutMicroUsd       BigInt?        // null until resolved; 0 on a loss
+  createdAt            DateTime       @default(now())
+  resolvedAt           DateTime?
+  ledgerEntries        LedgerEntry[]
+
+  // One bet per player per round -- mirrors GameRound's per-round
+  // uniqueness and gives placeCrashBet() the same DB-level idempotency
+  // shape as settleInstantRound() rather than an app-level check.
+  @@unique([crashRoundId, userId])
   @@index([userId, createdAt])
 }
