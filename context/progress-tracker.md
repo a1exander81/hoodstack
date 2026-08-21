@@ -3,29 +3,56 @@
 ## Current Phase
 
 - **Most recent state (read this first; every bullet below predates
-  it).** The wager path is real, merged, and playable. A player picks
-  a side; the route reserves a nonce against a commitment published
-  BEFORE the bet, `services/games` derives the outcome from that
-  round's float, and `services/ledger` moves the balance -- two rows
-  on a win (`WAGER` + `PAYOUT`), one on a loss. `dev-stubs.ts` and the
-  simulated-round banner are both deleted, so `Math.random()` no
-  longer decides anything anywhere in the repo. Two real rounds
-  settled against `hoodstack_dev` under commitment `d7fc78d2...`:
-  nonce 1 a loss (-1000000), nonce 2 a win (-5000000 then +9900000,
-  exactly 1.98x), with the derived balance landing at 9960000 and the
-  UI reading $9.96. Three PRs merged tonight: #14 (`22b3d36`) ledger
-  entry point + schema + `services/games` + the house-edge decision,
-  #15 (`3b57e04`) lazy Prisma init, #16 (`c2be303`) the two routes and
-  the Coinflip rewiring.
-  **Production does NOT work.** `/api/games/session` returns 401 on
-  `hoodstack-tawny.vercel.app` for a user who is genuinely signed in
-  (Privy `POST /api/v1/sessions` succeeds, embedded wallet resolves,
-  app ID matches local). Local is fine end to end. Production's
-  identity gate has never successfully verified a token -- every
-  deposit this project ever settled ran through the local dev server,
-  which is also why Neon's `LedgerEntry` is empty -- so the wager
-  route is simply the first code that ever asked it to. See Next Up
-  item 14.
+  it).** Production's 401 is RESOLVED, confirmed live, not just
+  inferred from the commit trail. Session sequence: `92ad8d7` added
+  temporary instrumentation to `resolveAuthenticatedDid` (never logs
+  the key itself -- length, newline presence, PEM header/footer,
+  `errorName` only); `4902ffc` redeployed after correcting
+  `PRIVY_VERIFICATION_KEY` in Vercel (the leading hypothesis from the
+  prior session, now confirmed rather than assumed); `95dd403`
+  reverted the instrumentation once it had done its job. `vercel logs
+  hoodstack-tawny.vercel.app --json` then showed a real, recent
+  request -- `GET /api/games/session` at 2026-08-22 00:41:07 PST --
+  with `responseStatusCode: 200`. That request's log level is
+  `error`, which reads alarming out of context: the message is a
+  Node-level pg SSL-mode deprecation warning (`sslmode=prefer/
+  require/verify-ca` being aliased to `verify-full`), unrelated to
+  auth, coincidentally interleaved into the same log line by Vercel's
+  collector. The route itself returned 200. `4c5962a` separately added
+  a Coinflip link from the signed-in card on `/`, closing the
+  "nothing links to `/games/coinflip`" gap (Next Up item 16) in the
+  same session.
+  **What this does NOT yet confirm:** whether a real deposit has
+  settled against production/Neon since the key fix (the wager route
+  succeeding is not the same claim as a deposit crediting), and
+  whether the pg SSL-mode warning above is worth quieting via
+  `uselibpqcompat=true&sslmode=require` on the Neon connection string --
+  cosmetic, not a correctness issue, since the query still succeeded.
+
+- **Prior state, superseded by the bullet above.** The wager path is
+  real, merged, and playable. A player picks a side; the route
+  reserves a nonce against a commitment published BEFORE the bet,
+  `services/games` derives the outcome from that round's float, and
+  `services/ledger` moves the balance -- two rows on a win (`WAGER` +
+  `PAYOUT`), one on a loss. `dev-stubs.ts` and the simulated-round
+  banner are both deleted, so `Math.random()` no longer decides
+  anything anywhere in the repo. Two real rounds settled against
+  `hoodstack_dev` under commitment `d7fc78d2...`: nonce 1 a loss
+  (-1000000), nonce 2 a win (-5000000 then +9900000, exactly 1.98x),
+  with the derived balance landing at 9960000 and the UI reading
+  $9.96. Three PRs merged that session: #14 (`22b3d36`) ledger entry
+  point + schema + `services/games` + the house-edge decision, #15
+  (`3b57e04`) lazy Prisma init, #16 (`c2be303`) the two routes and the
+  Coinflip rewiring.
+  **Production did NOT work at the time this bullet was written.**
+  `/api/games/session` returned 401 on `hoodstack-tawny.vercel.app`
+  for a user who was genuinely signed in (Privy `POST
+  /api/v1/sessions` succeeded, embedded wallet resolved, app ID
+  matched local). Local was fine end to end. Every deposit up to that
+  point had settled through the local dev server, which is also why
+  Neon's `LedgerEntry` was empty at the time -- the wager route was
+  simply the first code that ever asked production's identity gate to
+  verify a token. Resolved in the bullet above.
 
 - **Superseded (the PR #12/#13 era, kept for the trail).** The first
   game and the provably-fair mechanism both exist.
@@ -109,22 +136,19 @@
 
 ## Current Goal
 
-- **The next unit is production's 401, and it is a diagnosis before
-  it is a fix.** `/api/games/session` and `/api/games/coinflip` both
-  reject a valid Privy access token in production while working
-  locally. Established: the browser holds a real session, the app ID
-  is the same in both environments (`cmskn1c5v00zv0cjlz58nrrif`), and
-  the failure is a 401 from `resolveAuthenticatedDid`, not a 500 from
-  Prisma. The leading hypothesis is that `PRIVY_VERIFICATION_KEY` in
-  Vercel lost its line breaks -- it is a genuine 3-line PEM locally --
-  but that is UNCONFIRMED and must not be treated as established: the
-  value is Sensitive and cannot be read back, and one attempt to infer
-  it from `vercel env pull` produced a false positive tonight (see
-  Session Notes cont. 15). Instrument before changing anything: log
-  the key's LENGTH and whether it contains a real newline, never the
-  key itself. Only then choose between re-adding the variable and
-  normalizing escaped `\n` at the boundary in
-  `services/settlement/verify-session.ts`.
+- **RESOLVED -- production's 401 is fixed and confirmed live.** The
+  hypothesis this section previously flagged as UNCONFIRMED --
+  `PRIVY_VERIFICATION_KEY` losing its line breaks in Vercel -- was the
+  real cause. Fixed by re-entering the correct multi-line PEM value in
+  Vercel (`4902ffc`), with instrumentation (`92ad8d7`, key length +
+  newline presence only, never the key) added first and removed after
+  (`95dd403`) once it had served its purpose. Confirmed not from a
+  green deploy but from a real request: `vercel logs
+  hoodstack-tawny.vercel.app --json` shows `GET /api/games/session`
+  returning `responseStatusCode: 200` at 2026-08-22 00:41:07 PST. The
+  next real unit here is verifying a live deposit settles against
+  production/Neon post-fix -- that still hasn't been directly observed,
+  only the game-session route succeeding.
 
 - The `erc20ApprovalGasSponsoring` gap flagged at the top of this
   file is now closed: a genuinely fresh burner (verified at 0 BNB, 0
@@ -1261,19 +1285,17 @@
     attempts to set it failed tonight (see Session Notes cont. 15);
     the web dashboard remains the only path, and it is not urgent.
 
-14. **Production returns 401 on the game routes.** Highest-priority
-    real bug. `/api/games/session` rejects a valid Privy token on
-    `hoodstack-tawny.vercel.app` while the identical code works
-    locally. Do NOT start by re-pasting `PRIVY_VERIFICATION_KEY` --
-    that is a hypothesis, not a diagnosis, and tonight already
-    produced one false positive about that variable. Instrument
-    first: temporarily log the key's length and whether it contains a
-    real newline (never the key), deploy, make one request, read the
-    answer. Then fix. Note the blast radius is wider than the games:
-    `services/settlement`'s deposit gate uses the SAME
-    `resolveAuthenticatedDid`, so if the key is bad, production
-    deposits would fail too -- silently, inside `onAfterSettle`'s
-    try/catch.
+14. DONE -- **production's 401 is fixed and confirmed live.**
+    `PRIVY_VERIFICATION_KEY` had lost its line breaks in Vercel;
+    re-entered correctly (`4902ffc`), diagnosed via temporary
+    instrumentation (`92ad8d7`, reverted in `95dd403` once it had
+    served its purpose). Confirmed via `vercel logs
+    hoodstack-tawny.vercel.app --json`: a real `GET
+    /api/games/session` request returned `responseStatusCode: 200` at
+    2026-08-22 00:41:07 PST. Since `services/settlement`'s deposit gate
+    shares `resolveAuthenticatedDid`, this should also unblock
+    production deposits -- NOT yet directly confirmed by a settled
+    deposit against Neon, only by the game-session route succeeding.
 
 15. **`/games/coinflip` First Load JS went 106 kB -> 865 kB.** The
     page's own bundle barely moved (2.55 -> 3.21 kB); `usePrivy`
@@ -1283,10 +1305,11 @@
     slim token context or a server-side session read rather than the
     whole hook in the game bundle.
 
-16. **Nothing links to `/games/coinflip`.** There is no navigation to
-    any game from anywhere -- the landing page was never wired to the
-    `(app)` route group, so typing the URL is the only way in. Small,
-    but it means the game is currently unreachable by a real player.
+16. DONE -- **the signed-in card on `/` now links to
+    `/games/coinflip`** (`4c5962a`). Still only one entry point into
+    the game (this one link), which is fine at current scope but worth
+    revisiting once more games exist -- a real per-game lobby is not
+    built yet.
 
 ## Open Questions
 
@@ -1298,13 +1321,16 @@
   tuned to 1% without changing the wheel. Coinflip's
   `COINFLIP_PAYOUT_BPS = 19_800` is unchanged in value and now
   documented as a decision.
-- **Has production's identity gate EVER worked?** Every deposit this
-  project has settled ran through the local dev server -- which is why
-  Neon's `LedgerEntry` is empty, a fact confirmed directly tonight.
-  `PRIVY_VERIFICATION_KEY` has therefore sat in Vercel unused since
-  the day it was added, and tonight's 401 is the first time anything
-  asked it to verify a token. If the value is bad it has always been
-  bad, and the deposit route would fail the same way in production.
+- **RESOLVED: production's identity gate now works, confirmed live.**
+  It had never successfully verified a token before this fix -- every
+  prior deposit settled through the local dev server, which is why
+  Neon's `LedgerEntry` was empty. Root cause was a malformed
+  `PRIVY_VERIFICATION_KEY` in Vercel (lost line breaks); corrected and
+  confirmed via a real `GET /api/games/session` returning 200 in
+  production logs (see Current Phase). Still open: no deposit has been
+  directly observed settling against Neon since the fix, only the
+  session route succeeding -- worth a real deposit test before trusting
+  this unconditionally for money movement.
 - **Who has read access to the production database, and does that need
   restricting?** Server seeds sit in Postgres in plaintext until
   reveal, so read access to Neon is equivalent to knowing every
