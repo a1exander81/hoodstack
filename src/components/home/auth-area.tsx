@@ -60,6 +60,14 @@ export function AuthArea() {
         Play Coinflip
       </Link>
 
+      <Link
+        href="/games/crash"
+        prefetch={false}
+        className="mt-2 block rounded-md border border-border-default px-3 py-2 text-center text-xs transition hover:border-accent-primary hover:text-accent-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
+      >
+        Play Crash
+      </Link>
+
       {/*
         ui-context.md's Wallet Drawer pattern: blockchain details
         (address, chain, tx hash) are exposed only behind an "Advanced"

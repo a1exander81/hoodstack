@@ -124,6 +124,49 @@ type AckResponse<T> =
   | { ok: true; data: T }
   | { ok: false; code: string; message: string };
 
+// Socket.io's default parser encodes every packet with JSON.stringify, which
+// throws on a raw bigint -- unlike the HTTP routes (see api/games/session's
+// own comment on the same issue), nothing here converts one automatically.
+// Without this, a real bet:place/bet:cashout ack throws INSIDE the encoder,
+// after the wager/payout has already been committed to Postgres: the player
+// is genuinely debited (or paid) and gets back {ok:false, code:"INTERNAL"}
+// with no way to see the bet that was actually recorded. A retry hits the
+// idempotent already-placed/already-settled path, which carries the same
+// bigint fields and fails identically. Caught only now, while wiring the
+// first real client against this path -- PR #25's own commit message named
+// this exact gap ("payload parsing, ack shape... NOT verified end-to-end").
+type PlaceCrashBetAckData = {
+  status: PlaceCrashBetResult["status"];
+  crashBetId: string;
+  balanceMicroUsd: string;
+};
+
+function serializePlaceCrashBetResult(result: PlaceCrashBetResult): PlaceCrashBetAckData {
+  return {
+    status: result.status,
+    crashBetId: result.crashBetId,
+    balanceMicroUsd: result.balanceMicroUsd.toString(),
+  };
+}
+
+type SettleCrashBetAckData = {
+  status: SettleCrashBetResult["status"];
+  crashBetId: string;
+  won: boolean;
+  payoutMicroUsd: string;
+  balanceMicroUsd: string;
+};
+
+function serializeSettleCrashBetResult(result: SettleCrashBetResult): SettleCrashBetAckData {
+  return {
+    status: result.status,
+    crashBetId: result.crashBetId,
+    won: result.won,
+    payoutMicroUsd: result.payoutMicroUsd.toString(),
+    balanceMicroUsd: result.balanceMicroUsd.toString(),
+  };
+}
+
 function errorAck(err: unknown): { ok: false; code: string; message: string } {
   if (err instanceof RoundNotOpenForBettingError) {
     return { ok: false, code: "ROUND_NOT_OPEN", message: err.message };
@@ -155,7 +198,7 @@ io.on("connection", (socket: Socket) => {
 
   socket.on(
     "bet:place",
-    async (rawPayload: unknown, ack?: (response: AckResponse<PlaceCrashBetResult>) => void) => {
+    async (rawPayload: unknown, ack?: (response: AckResponse<PlaceCrashBetAckData>) => void) => {
       try {
         const payload = placeBetPayloadSchema.parse(rawPayload);
         // placeCrashBet row-locks CrashRound and checks status = BETTING
@@ -168,7 +211,7 @@ io.on("connection", (socket: Socket) => {
           crashRoundId: payload.crashRoundId,
           wagerMicroUsd: BigInt(payload.wagerMicroUsd),
         });
-        ack?.({ ok: true, data: result });
+        ack?.({ ok: true, data: serializePlaceCrashBetResult(result) });
       } catch (err) {
         ack?.(errorAck(err));
       }
@@ -177,7 +220,7 @@ io.on("connection", (socket: Socket) => {
 
   socket.on(
     "bet:cashout",
-    async (rawPayload: unknown, ack?: (response: AckResponse<SettleCrashBetResult>) => void) => {
+    async (rawPayload: unknown, ack?: (response: AckResponse<SettleCrashBetAckData>) => void) => {
       try {
         const payload = cashoutPayloadSchema.parse(rawPayload);
         // Unlike bet:place, there is no DB fallback here -- cashing out
@@ -201,7 +244,7 @@ io.on("connection", (socket: Socket) => {
           crashMultiplierBps: handle.crashMultiplierBps,
           cashoutMultiplierBps,
         });
-        ack?.({ ok: true, data: result });
+        ack?.({ ok: true, data: serializeSettleCrashBetResult(result) });
       } catch (err) {
         ack?.(errorAck(err));
       }
