@@ -3,7 +3,36 @@
 ## Current Phase
 
 - **Most recent state (read this first; every bullet below predates
-  it).** Crash Milestone 4 (the game page UI, `/games/crash`) is
+  it).** Both review findings from Milestone 4's own follow-up are
+  now fixed and MERGED (PR #27, `6dec961`): `crash-game.tsx` derives
+  the cash-out multiplier shown to the player from the ack's own
+  authoritative `payoutMicroUsd`/`wagerMicroUsd` instead of the
+  client's last-seen live tick, and `bet-panel.tsx`'s `setFromMicro`
+  now floors to whole cents before formatting, so it can no longer
+  silently drop a sub-cent balance remainder. Neither was ever a
+  money-correctness bug -- the ledger's own numbers were always
+  right -- both were display/precision defects, verified by direct
+  arithmetic (0-1 basis point drift on the multiplier derivation,
+  invisible at 2-decimal display; the balance clamp confirmed
+  lossless against a real fractional-cent balance) before the PR was
+  opened. **This is the first PR all session where CodeRabbit's
+  review genuinely completed rather than rate-limiting or losing the
+  merge race**: "No actionable comments were generated," Merge Risk
+  rated Minimal, its own walkthrough correctly described both fixes.
+  Confirmed synchronously via `gh pr view 27 --json state,mergedAt`
+  before treating it as done, per this session's own standing rule.
+
+  **The real remaining gap, now carried across three PRs (#25, #26,
+  #27) without closing**: no real signed-in bet/cash-out has ever
+  been driven through an actual browser. The Chrome extension needed
+  for that didn't connect any of the times it was attempted this
+  session. This is the one thing that most needs to happen before
+  trusting Crash's authenticated path with real money -- prioritize
+  it explicitly next session rather than letting more UI/feature work
+  stack on top of it again.
+
+- **Prior state, superseded by the bullet above.** Crash Milestone 4
+  (the game page UI, `/games/crash`) is
   MERGED (PR #26, `cb27b28`). Built against Milestone 3b's Socket.io
   transport; along the way, found and fixed a real bug in already-
   merged `game-engine/index.ts`: `bet:place`/`bet:cashout` acks passed
@@ -425,17 +454,17 @@
 
 ## Current Goal
 
-- **Milestone 4 (the Crash page UI) is MERGED (PR #26, `cb27b28` --
-  see Current Phase for the two unfixed review findings and the
-  bigint-ack bug this PR also fixed). The immediate next unit is
-  applying those two fixes**, not new feature work -- both are already
-  diagnosed, small, and low-risk. After that, the real outstanding
-  gap is the same one Milestone 3b shipped with and Milestone 4 didn't
-  close either: **no real signed-in bet/cash-out has ever been driven
-  through a browser** (the Chrome extension didn't connect either
-  session this was attempted). Prioritize actually closing that before
-  trusting this path further -- it's the one thing repeatedly deferred
-  across two milestones now.
+- **Crash's UI and its two follow-up fixes are all MERGED (PR #26
+  `cb27b28`, PR #27 `6dec961` -- see Current Phase). The next unit is
+  not more feature work: it's finally driving a real signed-in
+  bet/cash-out through an actual browser.** This has now been the
+  stated next step after three consecutive PRs (#25, #26, #27)
+  without ever happening, because the Chrome extension hasn't
+  connected in any of the sessions that tried. Before starting
+  Milestone 5 or anything else, either get the extension connected
+  and actually run the flow, or explicitly decide on some other real
+  verification path (a temporary headless-login test harness, e.g.) --
+  don't let a fourth PR land on this path still unverified.
   `game-engine/index.ts` still runs as a local `tsx` process only --
   deploying it is a separate, later decision, exactly like the
   facilitator itself, which still has never been deployed anywhere
