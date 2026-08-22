@@ -3,10 +3,58 @@
 ## Current Phase
 
 - **Most recent state (read this first; every bullet below predates
-  it).** Crash's build continues under the same 4-milestone plan.
-  Milestone 1 MERGED as `7a4cb74` (PR #19) and Milestone 2 MERGED as
-  `a77eb08` (PR #21) -- `CrashRound`/`CrashBet`, `services/games/crash.ts`,
-  and `placeCrashBet()`/`settleCrashBet()` are all now on `main`.
+  it).** Milestone 3 (the real-time round engine) is now split into 3a
+  (round-lifecycle orchestrator, zero sockets) and 3b (the Socket.io
+  transport layered on top) -- a call made explicitly this session
+  before writing any code, on the reasoning that a failure in a
+  first-ever real-time build should never be ambiguous between "the
+  round loop is wrong" and "the socket wiring is wrong." Also decided
+  explicitly, not left implicit: `game-engine/` runs as a local
+  `tsx`-run process for now, matching how every other backend unit in
+  this repo (RNG, the ledger, both deposit rails, the facilitator
+  itself) was built and proven locally before any deployment question
+  was resolved -- deployment is 3b-or-later's decision, not 3a's.
+
+  **Milestone 3a is built and verified, PR #22 open
+  (`feat/crash-round-engine`), CodeRabbit review triggered and
+  pending/rate-limit status not yet known.** New `services/crash-engine`
+  exports `runCrashRound()`: creates a commitment, holds betting open,
+  CAS-transitions BETTING -> RUNNING -> CRASHED, ticks the live
+  multiplier off a pure exponential curve, sweeps every still-PLACED
+  bet as a loss through the same `settleCrashBet` a live cash-out uses,
+  and marks the round revealed. `services/rng` gained
+  `createCrashRoundCommitment()`/`revealCrashRoundSeed()` -- a
+  round-scoped sibling of `reserveRound()`, same non-negotiable: the
+  caller gets a derived float, never the seed. `services/games/crash.ts`
+  gained the curve's pure inverse pair, `multiplierBpsAtElapsedMs`/
+  `elapsedMsForMultiplierBps`, parameterized on elapsed time (no
+  internal clock read) specifically so it stays testable without
+  sleeping and so the engine can schedule the crash transition exactly
+  rather than polling a tick value.
+
+  Verified via a disposable `scripts/verify-crash-engine.ts` (25/25,
+  deleted after use) against one real round on local Postgres: the
+  crash point never appeared in the DB row before CRASHED; a
+  stale-status CAS re-transition affected 0 rows; the end-of-round
+  sweep was exhaustive (no bets left PLACED) and idempotent on a
+  manual re-run (no duplicate ledger row); a real live cash-out
+  scheduled mid-round settled as a genuine win; and a same-round late
+  cash-out claim, deliberately scheduled to arrive after the sweep,
+  came back `already-settled` rather than double-processing -- the
+  exact race the per-bet `FOR UPDATE` lock in `settleCrashBet` (from
+  Milestone 2) exists to close, now exercised for real rather than
+  only reasoned about.
+
+  PR #20 (UI quick wins) is STILL open, still has never received a
+  real CodeRabbit review -- do not let PR #22 queue in front of it or
+  let it quietly become permanent; it remains independent and
+  shouldn't block anything, but it also shouldn't be forgotten.
+
+- **Prior state, superseded by the bullet above.** Crash's build
+  continued under the original 4-milestone plan. Milestone 1 MERGED as
+  `7a4cb74` (PR #19) and Milestone 2 MERGED as `a77eb08` (PR #21) --
+  `CrashRound`/`CrashBet`, `services/games/crash.ts`, and
+  `placeCrashBet()`/`settleCrashBet()` are all now on `main`.
   `npm run build` passes on `main` post-merge.
 
   Both merges went through a REAL CodeRabbit review with genuine
@@ -191,33 +239,30 @@
 
 ## Current Goal
 
-- **The next unit is Crash Milestone 3: the real-time round engine.**
-  Milestone 2 (PR #21) is built, verified, and open, branched cleanly
-  off `main` after Milestone 1 (PR #19) merged -- do not repeat that
-  mistake in reverse: don't start Milestone 3 by branching off an
-  unmerged Milestone 2. A standalone server on `facilitator/`'s template
-  (own `package.json`, `tsx`-run, hard-fail env validation) hosting
-  Socket.io -- nothing real-time is installed anywhere in the repo
-  today (confirmed by grepping `package.json`/`package-lock.json`/
-  `node_modules` end to end; `architecture.md`'s "Socket.io"/"Redis
-  (ioredis)" lines are aspirational stack docs only). Recommend
-  verifying it as a local `tsx`-run process first, deploying only once
-  proven -- exactly how the facilitator itself was built, and the
-  facilitator STILL has never been deployed anywhere despite a VPS
-  user/SSH key existing (Hostinger; no domain purchased). Concretely,
-  this milestone must: generate a fresh `CrashRound` (server seed +
-  hash, `deriveCrashPoint` from the committed float) and hold the crash
-  point PRIVATELY in the engine's own memory/state from round start
-  (never written to `CrashRound.crashMultiplierBps` until the round
-  actually crashes -- see that column's corrected schema comment);
-  drive `BETTING -> RUNNING -> CRASHED` transitions via the same
-  guarded compare-and-swap `UPDATE ... WHERE status = <expected>` shape
-  Milestone 2's verification script used, not a bare update; broadcast
-  the commitment before betting opens and the live multiplier while
-  running; call `placeCrashBet()`/`settleCrashBet()` at the right
-  moments; and authenticate the socket connection via a
-  socket-adapted `resolveAuthenticatedDid` (transport-agnostic already;
-  reconnect/expiry handling is new, not new Privy plumbing).
+- **The next unit is Crash Milestone 3b: the Socket.io transport.**
+  Milestone 3a (`services/crash-engine`'s `runCrashRound()`) is built,
+  verified against real local Postgres, and open as PR #22 -- do not
+  start 3b by branching off an unmerged 3a; wait for it to merge first,
+  same lesson already learned once between Milestones 1 and 2. Nothing
+  real-time is installed anywhere in the repo yet (confirmed by
+  grepping `package.json`/`package-lock.json`/`node_modules` end to
+  end; `architecture.md`'s "Socket.io"/"Redis (ioredis)" lines are
+  aspirational stack docs only). 3b is a standalone server on
+  `facilitator/`'s template (own `package.json`, `tsx`-run, hard-fail
+  env validation) hosting Socket.io, running as a local `tsx` process
+  for now -- deploying it is a separate, later decision, exactly like
+  the facilitator itself, which still has never been deployed anywhere
+  despite a VPS user/SSH key existing (Hostinger; no domain purchased).
+  Concretely, 3b must: call `runCrashRound()` in a loop (one round after
+  another -- 3a itself only ever runs a single round and returns);
+  broadcast `onBettingOpen`'s commitment and `onTick`'s live multiplier
+  to connected clients; wire real player bet/cash-out socket messages to
+  `placeCrashBet()`/`settleCrashBet()`, using the `onRunning` handle's
+  privately-held `crashMultiplierBps` for a live cash-out exactly the
+  way the Milestone 3a verify script simulated it; and authenticate the
+  socket connection via a socket-adapted `resolveAuthenticatedDid`
+  (transport-agnostic already; reconnect/expiry handling is new work,
+  not new Privy plumbing).
 
 - **RESOLVED -- production's 401 is fixed and confirmed live.** The
   hypothesis this section previously flagged as UNCONFIRMED --
