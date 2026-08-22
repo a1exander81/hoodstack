@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { RocketScene } from "./rocket-scene";
 import type { CrashedPayload, RoundStateSnapshot } from "./types";
 
 function formatMultiplierBps(bps: number): string {
@@ -26,49 +27,50 @@ function useCountdownSeconds(bettingOpenedAt: number, bettingWindowMs: number): 
 export function MultiplierDisplay({
   roundState,
   liveMultiplierBps,
+  liveElapsedMs,
   justCrashed,
 }: {
   roundState: RoundStateSnapshot;
   liveMultiplierBps: number;
+  liveElapsedMs: number;
   justCrashed: CrashedPayload | null;
 }) {
-  if (justCrashed) {
-    return (
-      <div className="flex flex-col items-center gap-2">
-        <p className="font-mono text-6xl font-bold text-state-error">
-          {formatMultiplierBps(justCrashed.crashMultiplierBps)}
-        </p>
-        <p className="text-sm text-text-muted">Crashed</p>
-      </div>
-    );
-  }
-
-  if (roundState.phase === "BETTING") {
-    return (
-      <BettingCountdown
-        bettingOpenedAt={roundState.bettingOpenedAt}
-        bettingWindowMs={roundState.bettingWindowMs}
-        serverSeedHash={roundState.serverSeedHash}
-      />
-    );
-  }
-
-  if (roundState.phase === "RUNNING") {
-    return (
-      <div className="flex flex-col items-center gap-2">
-        <p className="font-mono text-6xl font-bold text-accent-primary">
-          {formatMultiplierBps(liveMultiplierBps)}
-        </p>
-        <p className="text-sm text-text-muted">Rising&hellip;</p>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-col items-center gap-2">
-      <p className="font-mono text-6xl font-bold text-text-muted">&mdash;</p>
-      <p className="text-sm text-text-muted">Waiting for next round&hellip;</p>
-    </div>
+    <>
+      <RocketScene phase={roundState.phase} elapsedMs={liveElapsedMs} justCrashed={justCrashed} />
+      {/* text-shadow (black, neutral -- not a new palette color) keeps the
+          live multiplier legible over the starfield now behind it */}
+      <div className="relative z-10">
+        {justCrashed ? (
+          <div className="flex flex-col items-center gap-2">
+            <p className="font-mono text-6xl font-bold text-state-error [text-shadow:0_1px_12px_rgba(0,0,0,0.6)]">
+              {formatMultiplierBps(justCrashed.crashMultiplierBps)}
+            </p>
+            <p className="text-sm text-text-muted">Crashed</p>
+          </div>
+        ) : roundState.phase === "BETTING" ? (
+          <BettingCountdown
+            bettingOpenedAt={roundState.bettingOpenedAt}
+            bettingWindowMs={roundState.bettingWindowMs}
+            serverSeedHash={roundState.serverSeedHash}
+          />
+        ) : roundState.phase === "RUNNING" ? (
+          <div className="flex flex-col items-center gap-2">
+            <p className="font-mono text-6xl font-bold text-accent-primary [text-shadow:0_1px_12px_rgba(0,0,0,0.6)]">
+              {formatMultiplierBps(liveMultiplierBps)}
+            </p>
+            <p className="text-sm text-text-muted">Rising&hellip;</p>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-2">
+            <p className="font-mono text-6xl font-bold text-text-muted [text-shadow:0_1px_12px_rgba(0,0,0,0.6)]">
+              &mdash;
+            </p>
+            <p className="text-sm text-text-muted">Waiting for next round&hellip;</p>
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -85,7 +87,9 @@ function BettingCountdown({
 
   return (
     <div className="flex flex-col items-center gap-2">
-      <p className="font-mono text-6xl font-bold text-text-primary">{seconds}s</p>
+      <p className="font-mono text-6xl font-bold text-text-primary [text-shadow:0_1px_12px_rgba(0,0,0,0.6)]">
+        {seconds}s
+      </p>
       <p className="text-sm text-text-muted">Betting open</p>
       <p className="mt-2 max-w-xs break-all text-center font-mono text-[11px] text-text-muted/70">
         {serverSeedHash}
