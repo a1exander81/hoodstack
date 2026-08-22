@@ -3,7 +3,67 @@
 ## Current Phase
 
 - **Most recent state (read this first; every bullet below predates
-  it).** Crash Milestone 3b (the Socket.io transport) is MERGED
+  it).** Crash Milestone 4 (the game page UI, `/games/crash`) is
+  MERGED (PR #26, `cb27b28`). Built against Milestone 3b's Socket.io
+  transport; along the way, found and fixed a real bug in already-
+  merged `game-engine/index.ts`: `bet:place`/`bet:cashout` acks passed
+  `PlaceCrashBetResult`/`SettleCrashBetResult` straight through, and
+  both carry raw `bigint` fields -- Socket.io's default JSON parser
+  throws on a bigint, confirmed directly against the installed
+  `socket.io-parser` Encoder (throws pre-fix, clean round-trip after).
+  Unpatched, every real bet/cash-out would have mutated the ledger and
+  then thrown INSIDE the encoder, leaving the player with
+  `{ok:false, code:"INTERNAL"}` and no visible bet -- exactly the
+  "payload parsing, ack shape" gap PR #25's own commit message named
+  as unverified. Fixed by serializing both acks to string-based DTOs.
+
+  **CodeRabbit was rate-limited on this PR too (confirmed via
+  `gh pr view 26 --json reviews` -> `reviews: []`) -- the 6th+
+  consecutive PR this has happened on.** Per the standing rule added
+  this session (see "A Background Monitor Is Not a Merge Gate" in
+  `ai-workflow-rules.md`), rather than just noting the rate-limit and
+  moving on, a manual review pass was run in this review's place
+  (`/code-review medium`). It found two real issues -- **neither was
+  fixed before the PR was merged** (the person merged mid-fix; logged
+  honestly rather than glossed over):
+  1. **`crash-game.tsx`'s cash-out handler shows a fabricated
+     multiplier.** `serializeSettleCrashBetResult` doesn't carry
+     `cashoutMultiplierBps` (that field isn't even on
+     `SettleCrashBetResult` from `services/ledger` -- the engine only
+     ever holds it in a local variable right before calling
+     `settleCrashBet`), so the UI's ack handler sets
+     `cashoutMultiplierBps: liveMultiplierBps` -- whatever value was
+     on screen when the player clicked, not what was actually settled.
+     `round:tick` keeps advancing during the ~50-200ms round-trip, so
+     the displayed "cashed out at Xx" can visibly disagree with the
+     real payout. **Only a display bug, not a money bug** -- the
+     credited `payoutMicroUsd` itself is always correct, since it
+     comes straight from the ack. Fix identified, not yet applied:
+     derive the displayed multiplier from the ack's own
+     `payoutMicroUsd` / `myBet.wagerMicroUsd` (both already
+     authoritative) instead of trusting `liveMultiplierBps` -- correct
+     for both the `settled` and `already-settled` ack branches, no
+     engine/wire change needed.
+  2. **`bet-panel.tsx`'s `setFromMicro` round-trips a bigint through
+     `formatMicroUsd`/`parseUsdToMicro`**, which `src/lib/format.ts`'s
+     own docstring says never to do (`formatMicroUsd` truncates to
+     whole cents). Copied verbatim from Coinflip's `bet-panel.tsx`,
+     where a wager's multiplier (1.98x) rarely surfaces this; Crash's
+     arbitrary `cashoutMultiplierBps` routinely leaves a sub-cent
+     remainder in `balanceMicroUsd` after a win, so clamping a
+     quick-amount/&frac12;/2&times; button to balance silently drops
+     that remainder. Fix identified, not yet applied: floor to whole
+     cents (`(value / 10_000n) * 10_000n`) BEFORE calling
+     `formatMicroUsd`, so what's passed in is always exactly
+     representable -- provably lossless by construction, not by luck.
+  **Next session: apply both fixes, commit directly (small, low-risk,
+  already-diagnosed corrections to a just-merged PR -- same posture as
+  #23's fast-follow after #22), and consider whether a 6th-plus
+  consecutive CodeRabbit rate-limit means the review step itself needs
+  a different plan for this repo (e.g. a paid tier, or treating manual
+  review as the actual default rather than a fallback).**
+
+- **Prior state, superseded by the bullet above.** Crash Milestone 3b (the Socket.io transport) is MERGED
   (PR #25, squash-merged as `b904f37`) -- but this is the FIRST PR in
   this repo's session history to merge with literally zero review: not
   CodeRabbit, not a manual read either. CodeRabbit's summary comment
@@ -365,19 +425,17 @@
 
 ## Current Goal
 
-- **Milestone 3b is MERGED (PR #25, `b904f37` -- see Current Phase for
-  the review-gap caveat). The next unit is Crash Milestone 4: the
-  Crash page UI**, the last unbuilt piece of Crash itself. It needs to
-  connect to `game-engine/index.ts`'s Socket.io server, render the
-  live multiplier off `round:tick`/`round:running`, and drive real
-  `bet:place`/`bet:cashout` messages from a signed-in player -- which
-  would also be the first real end-to-end exercise of the
-  authenticated socket path 3b shipped unverified (see Current Phase).
-  Before or alongside building the UI, consider deliberately closing
-  that verification gap (a real browser session driving a real
-  bet/cash-out through the running engine) rather than letting the UI
-  work be the first time that path is ever actually exercised with
-  money on the line.
+- **Milestone 4 (the Crash page UI) is MERGED (PR #26, `cb27b28` --
+  see Current Phase for the two unfixed review findings and the
+  bigint-ack bug this PR also fixed). The immediate next unit is
+  applying those two fixes**, not new feature work -- both are already
+  diagnosed, small, and low-risk. After that, the real outstanding
+  gap is the same one Milestone 3b shipped with and Milestone 4 didn't
+  close either: **no real signed-in bet/cash-out has ever been driven
+  through a browser** (the Chrome extension didn't connect either
+  session this was attempted). Prioritize actually closing that before
+  trusting this path further -- it's the one thing repeatedly deferred
+  across two milestones now.
   `game-engine/index.ts` still runs as a local `tsx` process only --
   deploying it is a separate, later decision, exactly like the
   facilitator itself, which still has never been deployed anywhere
