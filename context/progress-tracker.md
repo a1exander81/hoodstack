@@ -3,7 +3,24 @@
 ## Current Phase
 
 - **Most recent state (read this first; every bullet below predates
-  it).** Crash's multiplier display got an animated space scene --
+  it).** The rocket-scene PR (#29) merged, and its CodeRabbit review
+  -- genuinely completed this time, 3 real nitpick findings, not
+  rate-limited -- landed AFTER the merge, same as the pattern seen
+  earlier this session. Read and fixed as a fast-follow (PR #30, not
+  yet merged as of this writing) rather than left sitting: a
+  `prefers-reduced-motion` listener that only fired once at mount
+  (an OS-level toggle mid-session never reached the loop); the
+  background gradient rebuilt every single frame instead of once per
+  resize; and the repeated text-shadow utility across all four
+  multiplier-text variants, extracted to one constant. Also fixed
+  along the way, found while addressing the `img.complete` question
+  CodeRabbit's own broader comment set raised: `img.complete` becomes
+  `true` for a BROKEN image too, and `drawFrame` isn't wrapped in
+  try/catch, so a failed sprite load could have silently killed every
+  frame after it, not just the rocket -- now tracked via explicit
+  `onload`/`onerror`.
+
+- **Prior state, superseded by the bullet above.** Crash's multiplier display got an animated space scene --
   requested by the person directly (a reference photo of a toy
   rocket, plus "rocket, rocket flame, trajectory that fades, planets,
   stars, outer space"). New `src/components/games/crash/
