@@ -3,7 +3,46 @@
 ## Current Phase
 
 - **Most recent state (read this first; every bullet below predates
-  it).** Milestone 3 (the real-time round engine) is now split into 3a
+  it).** Homepage perf fix merged (PR #24, `5db5179`), independent of
+  the Crash work below. Root cause, confirmed by curling the raw SSR
+  HTML before touching anything: `/` was entirely gated behind Privy's
+  client-side `ready` flag -- the server-rendered response contained
+  only "Loading..." text, no hero content at all, for every single
+  visit, until the ~865 KB Privy/wagmi bundle finished downloading and
+  initializing client-side. Fixed by making `src/app/page.tsx` a plain
+  Server Component (title/tagline render unconditionally, no client JS
+  dependency) with a small new client island,
+  `src/components/home/auth-area.tsx`, for the one piece that
+  genuinely needs wallet state (login button vs. signed-in card) --
+  same-sized skeleton while Privy initializes instead of blanking the
+  whole page. `src/components/home/wallet-details.tsx` (the wagmi
+  address/chain/balance panel) split out and dynamically imported
+  (`ssr:false`) so it's only fetched for a signed-in visitor. First
+  Load JS for `/`: 885 kB -> 869 kB per `npm run build`'s route table
+  -- a real but modest number next to the actual fix, which was mostly
+  about TIME TO FIRST VISIBLE CONTENT, not total bytes.
+  **Deliberately NOT done, flagged as a real follow-up rather than
+  attempted speculatively:** deferring the root layout's
+  `AppProviders` (Privy/wagmi) itself, which is most of why `/`'s
+  bundle is still ~869 kB -- every consumer app-wide (`SessionGate`,
+  `CoinflipGame`) would need to tolerate rendering before that
+  provider mounts, a materially larger and riskier change than this
+  pass's actual complaint (a noticeable blank stretch on load)
+  warranted.
+  **Not visually verified in a live browser** -- the Chrome extension
+  wasn't connected this session. Verified instead via the raw SSR HTML
+  diff (before: "Loading" only; after: real title/tagline present) and
+  a clean `npm run build`; `/games/coinflip` (untouched) confirmed
+  still serving correctly. CodeRabbit review never completed (rate
+  limited on the one trigger attempt, same recurring pattern as PRs
+  #20/#23) -- merged on the person's own review, same as those.
+  Recommend an actual browser click-through (login flow, mobile
+  layout, the "Advanced" wallet panel) next session before trusting
+  this further, since it's real player-facing UI on the app's primary
+  entry point and this pass only ever confirmed it via `curl`.
+
+- **Prior state, superseded by the bullet above.** Milestone 3 (the
+  real-time round engine) is now split into 3a
   (round-lifecycle orchestrator, zero sockets) and 3b (the Socket.io
   transport layered on top) -- a call made explicitly this session
   before writing any code, on the reasoning that a failure in a
