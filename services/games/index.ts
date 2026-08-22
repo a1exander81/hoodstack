@@ -9,6 +9,11 @@
 export { resolveCoinflip, isCoinSide, COINFLIP_PAYOUT_BPS } from './coinflip';
 export type { CoinSide } from './coinflip';
 
-export { deriveCrashPoint, resolveCrashBet } from './crash';
+export {
+  deriveCrashPoint,
+  resolveCrashBet,
+  multiplierBpsAtElapsedMs,
+  elapsedMsForMultiplierBps,
+} from './crash';
 
 export type { RoundResolution } from './types';
