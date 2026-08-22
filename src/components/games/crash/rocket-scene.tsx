@@ -110,8 +110,6 @@ export function RocketScene({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    reduceMotionRef.current = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
     const stars: Star[] = Array.from({ length: STAR_COUNT }, () => ({
       x: Math.random(),
       y: Math.random(),
@@ -125,11 +123,26 @@ export function RocketScene({
       { x: 0.64, y: 0.86, r: 8, color: PLANET_COLORS[2] },
     ];
 
+    // img.complete becomes true for a BROKEN image too (per spec), which
+    // would let drawImage throw inside drawFrame -- and since drawFrame
+    // isn't wrapped in try/catch, one throw would silently kill the rest of
+    // that frame's drawing (and, in the animated path, everything after
+    // it) rather than just leaving the rocket undrawn. Tracked explicitly
+    // via onload instead, left false on error.
+    let rocketReady = false;
     const rocketImg = new Image();
+    rocketImg.onload = () => {
+      rocketReady = true;
+      redrawStaticRef.current?.();
+    };
+    rocketImg.onerror = () => {
+      console.error("[rocket-scene] failed to load rocket sprite:", ROCKET_SRC);
+    };
     rocketImg.src = ROCKET_SRC;
 
     let width = 0;
     let height = 0;
+    let backgroundGradient: CanvasGradient | null = null;
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
@@ -138,6 +151,12 @@ export function RocketScene({
       canvas.width = width * dpr;
       canvas.height = height * dpr;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // Depends only on height -- rebuilding it every frame (60/sec in the
+      // animated path) for a value that only changes on resize is wasted
+      // work.
+      backgroundGradient = ctx.createLinearGradient(0, 0, 0, height);
+      backgroundGradient.addColorStop(0, SPACE_TOP);
+      backgroundGradient.addColorStop(1, SPACE_BOTTOM);
     };
     resize();
     const resizeObserver = new ResizeObserver(resize);
@@ -167,10 +186,7 @@ export function RocketScene({
     }
 
     function drawFrame(now: number, scrollBasis: number) {
-      const bg = ctx!.createLinearGradient(0, 0, 0, height);
-      bg.addColorStop(0, SPACE_TOP);
-      bg.addColorStop(1, SPACE_BOTTOM);
-      ctx!.fillStyle = bg;
+      ctx!.fillStyle = backgroundGradient!;
       ctx!.fillRect(0, 0, width, height);
 
       const reduceMotion = reduceMotionRef.current;
@@ -245,7 +261,7 @@ export function RocketScene({
         ctx!.fill();
       }
 
-      if (rocketImg.complete) {
+      if (rocketReady) {
         ctx!.save();
         ctx!.translate(pose.rx, pose.ry);
         ctx!.rotate(pose.sway * 2);
@@ -262,21 +278,46 @@ export function RocketScene({
 
     redrawStaticRef.current = () => drawFrame(performance.now(), 0);
 
-    if (reduceMotionRef.current) {
-      drawFrame(0, 0);
-      return () => {
-        resizeObserver.disconnect();
-        redrawStaticRef.current = null;
-      };
+    // A plain mount-time matchMedia check misses a mid-session OS-level
+    // toggle -- the effect only runs once, so nothing would ever re-read
+    // it. A `change` listener keeps reduceMotionRef (and which mode is
+    // actually running) in sync for the rest of this component's life.
+    let rafId: number | null = null;
+    function startLoop() {
+      if (rafId !== null) return;
+      rafId = requestAnimationFrame(function loop(now) {
+        drawFrame(now, now);
+        rafId = requestAnimationFrame(loop);
+      });
+    }
+    function stopLoop() {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+    }
+    function applyMotionPreference() {
+      if (reduceMotionRef.current) {
+        stopLoop();
+        drawFrame(performance.now(), 0);
+      } else {
+        startLoop();
+      }
     }
 
-    let rafId = requestAnimationFrame(function loop(now) {
-      drawFrame(now, now);
-      rafId = requestAnimationFrame(loop);
-    });
+    const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    reduceMotionRef.current = motionQuery.matches;
+    applyMotionPreference();
+
+    const handleMotionChange = (event: MediaQueryListEvent) => {
+      reduceMotionRef.current = event.matches;
+      applyMotionPreference();
+    };
+    motionQuery.addEventListener("change", handleMotionChange);
 
     return () => {
-      cancelAnimationFrame(rafId);
+      stopLoop();
+      motionQuery.removeEventListener("change", handleMotionChange);
       resizeObserver.disconnect();
       redrawStaticRef.current = null;
     };

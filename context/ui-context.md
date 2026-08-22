@@ -11,25 +11,26 @@ language instead: near-black surfaces, one confident accent color,
 real typographic hierarchy, and enough spacing that the UI doesn't
 feel like a pressure page.
 
-**Deliberate exception: Crash's multiplier display.** `src/components/
-games/crash/rocket-scene.tsx` renders an animated space scene (stars,
-parallax planets, a rocket sprite with flame and a fading trajectory
-trail) behind the live multiplier number — a literal reading of
-"Crash," the game's own name and mechanic, not a generic decoration.
-Chosen deliberately as a scoped exception rather than a drift from
-the restrained default above: it lives in exactly one component, on
-the one screen where the round is actually live, and does not touch
-the surrounding chrome (bet panel, balance, nav all stay on the
-standard palette). Its own small color palette (deep-space gradient,
-star white, a few planet accent hues, flame orange/yellow) is defined
-as named constants inside that file rather than as Tailwind tokens —
-canvas `fillStyle`/`strokeStyle` take raw color strings regardless of
-the token system, so `code-standards.md`'s "no hardcoded hex in
-classNames" rule doesn't apply to it, and adding one-off Tailwind
-tokens for colors used nowhere else would be worse, not better. The
-rocket sprite is a licensed/user-provided PNG in `public/crash/
-rocket.png` (referenced by URL, not bundled through the JS build),
-not a Lucide icon — the Icons section's "Lucide stroke-based only"
+**Deliberate exception: Crash's multiplier display.**
+`src/components/games/crash/rocket-scene.tsx` renders an animated
+space scene (stars, parallax planets, a rocket sprite with flame and
+a fading trajectory trail) behind the live multiplier number — a
+literal reading of "Crash," the game's own name and mechanic, not a
+generic decoration. Chosen deliberately as a scoped exception rather
+than a drift from the restrained default above: it lives in exactly
+one component, on the one screen where the round is actually live,
+and does not touch the surrounding chrome (bet panel, balance, nav
+all stay on the standard palette). Its own small color palette
+(deep-space gradient, star white, a few planet accent hues, flame
+orange/yellow) is defined as named constants inside that file rather
+than as Tailwind tokens — canvas `fillStyle`/`strokeStyle` take raw
+color strings regardless of the token system, so `code-standards.md`'s
+"no hardcoded hex in classNames" rule doesn't apply to it, and adding
+one-off Tailwind tokens for colors used nowhere else would be worse,
+not better. The rocket sprite is a licensed/user-provided PNG in
+`public/crash/rocket.png` (referenced by URL, not bundled through the
+JS build), not a Lucide icon — the Icons section's "Lucide
+stroke-based only"
 rule below is about UI chrome (buttons, inline icons), not this one
 illustrated centerpiece.
 

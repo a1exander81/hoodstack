@@ -8,6 +8,12 @@ function formatMultiplierBps(bps: number): string {
   return `${(bps / 10_000).toFixed(2)}x`;
 }
 
+// Shared rather than repeated across the four number variants below --
+// black, neutral, not a new palette color -- keeps the live multiplier
+// legible over the starfield now behind it.
+const BIG_NUMBER_CLASS =
+  "font-mono text-6xl font-bold [text-shadow:0_1px_12px_rgba(0,0,0,0.6)]";
+
 /** Presentational-only ticking countdown; touches nothing but the display. */
 function useCountdownSeconds(bettingOpenedAt: number, bettingWindowMs: number): number {
   const [remainingMs, setRemainingMs] = useState(
@@ -43,7 +49,7 @@ export function MultiplierDisplay({
       <div className="relative z-10">
         {justCrashed ? (
           <div className="flex flex-col items-center gap-2">
-            <p className="font-mono text-6xl font-bold text-state-error [text-shadow:0_1px_12px_rgba(0,0,0,0.6)]">
+            <p className={`${BIG_NUMBER_CLASS} text-state-error`}>
               {formatMultiplierBps(justCrashed.crashMultiplierBps)}
             </p>
             <p className="text-sm text-text-muted">Crashed</p>
@@ -56,16 +62,14 @@ export function MultiplierDisplay({
           />
         ) : roundState.phase === "RUNNING" ? (
           <div className="flex flex-col items-center gap-2">
-            <p className="font-mono text-6xl font-bold text-accent-primary [text-shadow:0_1px_12px_rgba(0,0,0,0.6)]">
+            <p className={`${BIG_NUMBER_CLASS} text-accent-primary`}>
               {formatMultiplierBps(liveMultiplierBps)}
             </p>
             <p className="text-sm text-text-muted">Rising&hellip;</p>
           </div>
         ) : (
           <div className="flex flex-col items-center gap-2">
-            <p className="font-mono text-6xl font-bold text-text-muted [text-shadow:0_1px_12px_rgba(0,0,0,0.6)]">
-              &mdash;
-            </p>
+            <p className={`${BIG_NUMBER_CLASS} text-text-muted`}>&mdash;</p>
             <p className="text-sm text-text-muted">Waiting for next round&hellip;</p>
           </div>
         )}
@@ -87,9 +91,7 @@ function BettingCountdown({
 
   return (
     <div className="flex flex-col items-center gap-2">
-      <p className="font-mono text-6xl font-bold text-text-primary [text-shadow:0_1px_12px_rgba(0,0,0,0.6)]">
-        {seconds}s
-      </p>
+      <p className={`${BIG_NUMBER_CLASS} text-text-primary`}>{seconds}s</p>
       <p className="text-sm text-text-muted">Betting open</p>
       <p className="mt-2 max-w-xs break-all text-center font-mono text-[11px] text-text-muted/70">
         {serverSeedHash}
