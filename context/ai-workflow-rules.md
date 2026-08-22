@@ -74,6 +74,28 @@ tonight's change was -- take the branch. The cost is about ninety
 seconds and the alternative is discovering the pattern only by counting
 occurrences after the fact.
 
+## A Background Monitor Is Not a Merge Gate
+
+CodeRabbit review has now failed to gate a merge on money-adjacent code
+across five straight PRs (#20-#25): rate-limited on #20/#23/#24, landed
+late and unread on #22 (fixed in a fast-follow, PR #23), and on #25
+didn't even get the chance to rate-limit -- the merge landed before the
+review ran at all, and CodeRabbit's own retry then refused because the
+PR was already closed. A `Monitor` poll waiting on a review result is
+not a substitute for actually checking synchronously right before
+calling something safe to merge -- the person can and does act in
+parallel, and a still-running background watch can lag behind a real
+merge by minutes.
+
+Standing rule: for anything on the "branch -> PR -> CodeRabbit" list
+above, do not advise "safe to merge" (or silently treat a merge as
+gated) on the strength of a Monitor task that hasn't yet reported back.
+Check synchronously (`gh pr view <n> --json reviews,comments`) at the
+moment of the claim. If the person merges before a review lands
+anyway, that is their call to make -- but log it plainly in
+`progress-tracker.md` rather than assuming a background watch was
+doing the job it wasn't built to do.
+
 ## Editing Existing Files
 
 Before building any anchored replacement (or any find-and-replace) for
