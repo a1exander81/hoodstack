@@ -15,9 +15,51 @@
   itself) was built and proven locally before any deployment question
   was resolved -- deployment is 3b-or-later's decision, not 3a's.
 
-  **Milestone 3a is built and verified, PR #22 open
-  (`feat/crash-round-engine`), CodeRabbit review triggered and
-  pending/rate-limit status not yet known.** New `services/crash-engine`
+  **Milestone 3a MERGED (PR #22, `f3c98a5`) -- but merged by the person
+  directly, before its CodeRabbit review's findings could be addressed.
+  Both PR #20 and PR #22 were squashed and merged by the person while
+  this session was mid-poll waiting on #22's review** (session note,
+  not a fault: the review had in fact already come back for real by
+  the time of the merge -- CodeRabbit's own "does not re-review already
+  reviewed commits" note on the later manual trigger confirms the
+  automatic review ran promptly, the polling script just hadn't caught
+  up to it yet). The review was genuine, not rate-limited this time:
+  **3 actionable findings, Merge Risk flagged 🟠 High**, recommending
+  the merge wait. It didn't wait. All 3 findings were real (verified
+  against the actual code, not assumed from the review text) and are
+  now fixed in a fast-follow, PR #23 (`fix/crash-engine-review-findings`),
+  open with its own CodeRabbit review triggered:
+  1. Observer callbacks (`onBettingOpen`/`onRunning`/`onTick`/
+     `onCrashed`) ran uncaught -- a throw from any of them (e.g. a
+     broadcast failure in the eventual socket layer) would abort
+     `runCrashRound` mid-lifecycle, stranding a round with unresolved
+     bets and no reveal. Fixed with a `safeCallback` wrapper; verified
+     by a run where all four callbacks threw on every call and the
+     round still reached CRASHED, swept its bet, and revealed.
+  2. The sweep-then-reveal step had no recovery path: one
+     `settleCrashBet` failure would exit before `revealedAt` was set,
+     and nothing could resume that specific round afterward (only a
+     brand new one). Fixed by extracting `finalizeCrashRound()` as its
+     own idempotent, resumable function -- withholds `revealedAt`
+     unless zero bets remain `PLACED`, safe to call again on the same
+     round. `CrashRoundSummary` gained a `fullyResolved` flag.
+  3. `revealCrashRoundSeed` returned `serverSeed` for a round in ANY
+     status, relying on callers to only invoke it post-resolution --
+     nothing calls it that early today, but it didn't enforce its own
+     documented invariant. Fixed to gate on `revealedAt: { not: null }`
+     in the query itself, matching the posture `services/rng`'s other
+     functions already take toward an active/secret seed.
+  Re-verified 12/12 against real local Postgres (disposable script,
+  deleted after use); `npm run build` passes. **Lesson for this
+  session's own record, not the person's:** a background monitor
+  polling for CodeRabbit's response is not a substitute for actually
+  gating the merge on it -- the review can land and the merge can
+  happen before the poll surfaces the result, especially once a human
+  is acting in parallel. Next time: prefer checking synchronously
+  right before recommending "safe to merge," not trusting a
+  still-running background watch to be the only gate.
+
+  New `services/crash-engine`
   exports `runCrashRound()`: creates a commitment, holds betting open,
   CAS-transitions BETTING -> RUNNING -> CRASHED, ticks the live
   multiplier off a pure exponential curve, sweeps every still-PLACED
@@ -45,10 +87,12 @@
   Milestone 2) exists to close, now exercised for real rather than
   only reasoned about.
 
-  PR #20 (UI quick wins) is STILL open, still has never received a
-  real CodeRabbit review -- do not let PR #22 queue in front of it or
-  let it quietly become permanent; it remains independent and
-  shouldn't block anything, but it also shouldn't be forgotten.
+  **PR #20 (UI quick wins) is now MERGED too** (`3c57d5c`, squashed by
+  the person alongside #22 -- its own CodeRabbit rate-limit saga from
+  earlier this session never did resolve; it went in on the person's
+  own judgment rather than a passing review). Both PR #20's and #22's
+  UI/schema/service changes are confirmed present on `main` after a
+  fast-forward pull.
 
 - **Prior state, superseded by the bullet above.** Crash's build
   continued under the original 4-milestone plan. Milestone 1 MERGED as
@@ -239,11 +283,16 @@
 
 ## Current Goal
 
-- **The next unit is Crash Milestone 3b: the Socket.io transport.**
-  Milestone 3a (`services/crash-engine`'s `runCrashRound()`) is built,
-  verified against real local Postgres, and open as PR #22 -- do not
-  start 3b by branching off an unmerged 3a; wait for it to merge first,
-  same lesson already learned once between Milestones 1 and 2. Nothing
+- **Immediately next: get PR #23 (the fast-follow fixing #22's 3
+  CodeRabbit findings) reviewed and merged before starting 3b.** #22
+  itself already merged (see Current Phase) with those findings
+  unaddressed; #23 fixes all three and needs its own real review, not
+  a repeat of #22's outcome.
+
+- **After #23 merges, the next unit is Crash Milestone 3b: the
+  Socket.io transport.** Milestone 3a (`services/crash-engine`'s
+  `runCrashRound()`) is built, verified against real local Postgres,
+  and merged. Nothing
   real-time is installed anywhere in the repo yet (confirmed by
   grepping `package.json`/`package-lock.json`/`node_modules` end to
   end; `architecture.md`'s "Socket.io"/"Redis (ioredis)" lines are
