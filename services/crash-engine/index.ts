@@ -4,5 +4,10 @@
 // (crash point + curve), and services/ledger (placeCrashBet/settleCrashBet)
 // -- it owns none of their invariants itself, only the sequencing.
 
-export { runCrashRound, RoundTransitionError } from './round-loop';
-export type { RunCrashRoundOptions, RunningRoundHandle, CrashRoundSummary } from './round-loop';
+export { runCrashRound, finalizeCrashRound, RoundTransitionError } from './round-loop';
+export type {
+  RunCrashRoundOptions,
+  RunningRoundHandle,
+  CrashRoundSummary,
+  FinalizeCrashRoundResult,
+} from './round-loop';

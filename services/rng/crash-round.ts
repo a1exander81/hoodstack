@@ -61,9 +61,18 @@ export type RevealedCrashRoundSeed = {
  * bet in the round has settled, not merely after the crash. This
  * function is a plain read of already-committed material for display,
  * not a state transition.
+ *
+ * Gated on `revealedAt IS NOT NULL` in the query itself, not left to
+ * callers to check first -- the same posture reserveRound/
+ * getActiveCommitment take toward an active SeedPair's serverSeed. A
+ * round still BETTING or RUNNING throws here rather than handing back
+ * a still-secret seed, even though nothing calls this function that
+ * early today.
  */
 export async function revealCrashRoundSeed(crashRoundId: string): Promise<RevealedCrashRoundSeed> {
-  const round = await prisma.crashRound.findUniqueOrThrow({ where: { id: crashRoundId } });
+  const round = await prisma.crashRound.findFirstOrThrow({
+    where: { id: crashRoundId, revealedAt: { not: null } },
+  });
   return {
     crashRoundId: round.id,
     serverSeed: round.serverSeed,
