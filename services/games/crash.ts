@@ -109,3 +109,49 @@ export function resolveCrashBet(
       : 0n,
   };
 }
+
+/**
+ * Growth constant for the live multiplier curve, chosen so the curve
+ * doubles roughly every 4 seconds -- a common crash-game pace, picked
+ * for feel rather than derived from any other constant in this file.
+ * multiplierBpsAtElapsedMs(t) = 10_000 * e^(GROWTH_PER_MS * t).
+ *
+ * This is display/timing math only -- it has no bearing on fairness.
+ * The crash point is already fixed at round start by deriveCrashPoint;
+ * this curve only decides how long the round takes to visually reach
+ * that point, which is why its inverse (elapsedMsForMultiplierBps) is
+ * safe for the round engine to use to schedule the CRASHED transition
+ * instead of polling the tick value every iteration.
+ */
+const GROWTH_PER_MS = Math.log(2) / 4000;
+
+/**
+ * The live multiplier at a given elapsed time since RUNNING started.
+ * Pure function of elapsedMs so it is testable without a real clock --
+ * the round engine calls this every tick with real elapsed time, and a
+ * test can call it with any fake value.
+ */
+export function multiplierBpsAtElapsedMs(elapsedMs: number): number {
+  if (!(elapsedMs >= 0)) {
+    throw new Error(`elapsedMs must be non-negative, got ${elapsedMs}`);
+  }
+  return Math.max(
+    BPS_PER_UNIT,
+    Math.floor(BPS_PER_UNIT * Math.exp(GROWTH_PER_MS * elapsedMs)),
+  );
+}
+
+/**
+ * Inverse of multiplierBpsAtElapsedMs: how long the curve takes to
+ * reach a given multiplier. The round engine calls this once, at round
+ * start, to know exactly when (in elapsed ms) to transition RUNNING ->
+ * CRASHED.
+ */
+export function elapsedMsForMultiplierBps(crashMultiplierBps: number): number {
+  if (!Number.isInteger(crashMultiplierBps) || crashMultiplierBps < BPS_PER_UNIT) {
+    throw new Error(
+      `crashMultiplierBps must be an integer >= ${BPS_PER_UNIT}, got ${crashMultiplierBps}`,
+    );
+  }
+  return Math.log(crashMultiplierBps / BPS_PER_UNIT) / GROWTH_PER_MS;
+}
