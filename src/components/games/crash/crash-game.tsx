@@ -182,19 +182,34 @@ export function CrashGame() {
         // sweep writes no further ledger row, so there's nothing to
         // refetch on the losing branch.
         setBalanceMicroUsd(BigInt(response.data.balanceMicroUsd));
+        const payoutMicroUsd = BigInt(response.data.payoutMicroUsd);
         setMyBet((current) =>
           current
             ? {
                 ...current,
                 status: "cashed_out",
-                cashoutMultiplierBps: liveMultiplierBps,
-                payoutMicroUsd: BigInt(response.data.payoutMicroUsd),
+                // Derived from the ack's own authoritative payoutMicroUsd,
+                // NOT liveMultiplierBps -- that's whatever tick was on
+                // screen when the player clicked, and round:tick keeps
+                // advancing during the round-trip, so it can visibly
+                // disagree with what was actually settled. This division
+                // is exact enough for a 2-decimal "x" display even though
+                // it can't perfectly invert resolveCrashBet's own floor
+                // (bounded to well under 1 basis point of drift), and it
+                // holds for both the 'settled' and 'already-settled' ack
+                // branches alike, unlike threading the engine's transient
+                // cashoutMultiplierBps variable through the wire would.
+                cashoutMultiplierBps:
+                  payoutMicroUsd > 0n
+                    ? Number((payoutMicroUsd * 10_000n) / current.wagerMicroUsd)
+                    : 0,
+                payoutMicroUsd,
               }
             : current,
         );
       },
     );
-  }, [roundState, myBet, submitting, liveMultiplierBps]);
+  }, [roundState, myBet, submitting]);
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-8 lg:grid lg:grid-cols-[320px_1fr_300px] lg:items-start">

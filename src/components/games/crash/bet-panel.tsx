@@ -37,8 +37,19 @@ export function BetPanel({
   const tooLarge = parsed !== null && parsed > balanceMicroUsd;
   const valid = parsed !== null && !tooSmall && !tooLarge;
 
+  // format.ts's own docstring says never to round-trip a formatted string
+  // back into an amount, because formatMicroUsd truncates to whole cents.
+  // Coinflip's identical helper gets away with that (its payout ratio
+  // rarely lands off a whole cent for typical wagers), but Crash's
+  // arbitrary cashoutMultiplierBps routinely leaves balanceMicroUsd with a
+  // sub-cent remainder after a win -- silently discarding it when clamping
+  // to balance. Flooring to whole cents FIRST makes the value passed to
+  // formatMicroUsd always exactly representable, so the round-trip is
+  // provably lossless by construction rather than by accident.
   const setFromMicro = (micro: bigint) => {
-    const clamped = micro > balanceMicroUsd ? balanceMicroUsd : micro;
+    const wholeCentBalance = (balanceMicroUsd / 10_000n) * 10_000n;
+    const wholeCentTarget = (micro / 10_000n) * 10_000n;
+    const clamped = wholeCentTarget > wholeCentBalance ? wholeCentBalance : wholeCentTarget;
     setAmountText(formatMicroUsd(clamped).replace("$", "").replace(/,/g, ""));
   };
 
