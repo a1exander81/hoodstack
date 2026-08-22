@@ -4,51 +4,55 @@
 
 - **Most recent state (read this first; every bullet below predates
   it).** Crash's build continues under the same 4-milestone plan.
-  Milestone 1 (schema + pure resolver) MERGED as `7a4cb74` (PR #19,
-  squashed) -- `CrashRound`/`CrashBet` models and
-  `services/games/crash.ts`'s `deriveCrashPoint`/`resolveCrashBet` are
-  now on `main`. CodeRabbit's real review (triggered manually -- this
-  repo is under 10 stars, so it does not auto-review, see Session
-  Notes) found one genuine gap before merge: `resolveCrashBet` --
-  documented as "the single authority" for win/loss -- trusted its
-  inputs while `deriveCrashPoint` validated its own. Fixed in `672fa5b`
-  before merging: now rejects non-integer or sub-1.00x multipliers and
-  negative wagers, re-verified with 5 new cases (24/24 total). A second
-  finding (dangling `scripts/verify-crash.ts` filename reference in a
-  docstring, since that script is deleted after use by convention) was
-  also fixed. A third finding ("no progress-tracker.md update in this
-  PR's diff") was correctly NOT actionable -- docs commits go direct to
-  `main` per this project's own git-path rule, already done separately.
+  Milestone 1 MERGED as `7a4cb74` (PR #19) and Milestone 2 MERGED as
+  `a77eb08` (PR #21) -- `CrashRound`/`CrashBet`, `services/games/crash.ts`,
+  and `placeCrashBet()`/`settleCrashBet()` are all now on `main`.
+  `npm run build` passes on `main` post-merge.
 
-  Milestone 2 (two-phase `services/ledger` entry point, PR #21, open --
-  branch `feat/crash-ledger-entrypoint`) adds `placeCrashBet()` (debits
-  the wager, row-locks `CrashRound` first so a bet can never land after
-  betting closes) and `settleCrashBet()` -- ONE function for both a live
-  cash-out and the round-end loss sweep, both funneling through
-  `resolveCrashBet` so a cash-out is never simply trusted as a win.
-  Row-locks the specific `CrashBet` to close the real race this
-  milestone had to design: a cash-out tap landing at the same instant
-  the round crashes -- whichever transaction commits first wins, the
-  other gets the already-settled result back. Also corrected a
-  Milestone-1 schema comment in the same PR: `crashMultiplierBps` being
-  null until `CRASHED` is an API-exposure safety net, not evidence the
-  system doesn't know the value sooner -- the round engine (Milestone
-  3, not yet built) computes and holds it privately from round start,
-  passed to `settleCrashBet` as a parameter, same posture
-  `services/rng` already takes toward an active `SeedPair`'s
-  `serverSeed`. Verified via a disposable `scripts/verify-crash-ledger.ts`
-  (deleted after use): 18 checks against real local Postgres --
-  idempotency on both functions, insufficient-balance and
-  round-not-open rejections leaving no orphan rows, win/loss/defensive-
-  rejection paths, and a best-effort concurrent cash-out-vs-sweep check
-  (`Promise.allSettled` can't guarantee overlap in Postgres, recorded
-  honestly rather than claimed as proof, matching PR #14's own
-  precedent). `npm run build` passes.
+  Both merges went through a REAL CodeRabbit review with genuine
+  findings, not a rubber stamp -- this repo doesn't auto-review (under
+  10 stars), so every review across both PRs required a manual
+  `@coderabbitai review` trigger comment, and a good fraction of those
+  triggers hit CodeRabbit's free-tier per-developer rate limit rather
+  than actually running (see Session Notes cont. 17 for the full
+  pattern, since it recurred a second time this session with PR #21
+  itself). What each real review actually found and how it was
+  resolved:
+  - PR #19: `resolveCrashBet` trusted its inputs while `deriveCrashPoint`
+    validated its own -- fixed (`672fa5b`) to reject non-integer/
+    sub-1.00x multipliers and negative wagers, re-verified 24/24.
+  - PR #21: two High-risk findings, both real. (1) `placeCrashBet`'s
+    retry path treated ANY P2002 as "already placed" without checking
+    the retried wager actually matched -- fixed to compare
+    `existing.wagerMicroUsd` and throw a new
+    `DuplicateBetWagerMismatchError` on mismatch. (2) `settleCrashBet`
+    persisted a defensively-rejected cashout's `cashoutMultiplierBps`
+    onto a bet marked LOST, indistinguishable from a genuine cashout
+    attempt -- fixed to store `null` in that case. Also, applying
+    CodeRabbit's own suggested P2002-matching diff would have been
+    WRONG: it assumed `meta.target` holds field names, but probing a
+    real duplicate insert under this project's actual Prisma 7.9.1 +
+    `@prisma/adapter-pg` combination showed `meta` is `{ modelName:
+    'CrashBet', driverAdapterError }` with no `target` array at all --
+    matched on `meta.modelName` instead, verified against the real
+    error object rather than trusted from the review comment. Also
+    fixed: raw Privy DID dropped from a rejected-cashout log line;
+    `architecture.md` invariant 1 amended to document Crash's
+    pre-settlement WAGER-debit exception (gated on an open, committed
+    round, not a settled one -- no equivalent exists for the
+    single-shot games). Re-verified 21/21. Both merges' "stale
+    progress-tracker.md" findings were correctly NOT actionable within
+    those PRs -- docs commits go direct to `main` per this project's
+    own git-path rule, done separately each time.
 
-  PR #20 (UI quick wins, independent of Crash) is still open --
-  CodeRabbit's free-tier per-developer review limit was hit triggering
-  it, and re-triggering after the stated cooldown has so far produced
-  no response either way; still pending as of this writing.
+  PR #20 (UI quick wins, independent of Crash) is STILL open and still
+  has never received a real CodeRabbit review -- every trigger attempt
+  across this entire session hit the rate limit, including ones sent
+  hours apart and past the limit's own stated reset time. Left as an
+  explicit, unresolved decision point rather than merged around the
+  review: the person chose to merge #21 on the strength of its own real
+  review while continuing to hold #20 for an actual review before
+  merging it.
 
   Milestones 3-4 (the real-time round engine, the Crash page UI) are
   NOT started -- see Next Up.
@@ -291,26 +295,37 @@
 
 ## Completed
 
-- **Crash Milestone 1 merged (`7a4cb74`) after CodeRabbit's real review
-  found and this session fixed a genuine gap, and Milestone 2 built and
-  opened as PR #21.** `resolveCrashBet` trusted its own inputs while
-  `deriveCrashPoint` validated its -- fixed (`672fa5b`) to reject
-  non-integer/sub-1.00x multipliers and negative wagers before merging,
-  re-verified 24/24. Milestone 2 (`feat/crash-ledger-entrypoint`,
-  `fb95d2a`, PR #21): `placeCrashBet()` and a unified `settleCrashBet()`
-  (one function for both a live cash-out and the round-end loss sweep),
-  each row-locking the specific `CrashRound`/`CrashBet` to close the
-  real races involved (a bet landing after betting closes; a cash-out
-  racing the round's own crash) -- no new advisory-lock scheme needed,
-  a per-row `FOR UPDATE` closes both. Also corrected Milestone 1's
+- **Crash Milestones 1 AND 2 both built, CodeRabbit-reviewed with real
+  findings fixed, and MERGED.** Milestone 1: `7a4cb74` (PR #19).
+  `resolveCrashBet` trusted its own inputs while `deriveCrashPoint`
+  validated its -- fixed (`672fa5b`) to reject non-integer/sub-1.00x
+  multipliers and negative wagers before merging, re-verified 24/24.
+  Milestone 2: `a77eb08` (PR #21, branch `feat/crash-ledger-entrypoint`).
+  `placeCrashBet()` and a unified `settleCrashBet()` (one function for
+  both a live cash-out and the round-end loss sweep), each row-locking
+  the specific `CrashRound`/`CrashBet` to close the real races involved
+  (a bet landing after betting closes; a cash-out racing the round's
+  own crash) -- no new advisory-lock scheme needed, a per-row
+  `FOR UPDATE` closes both. Also corrected Milestone 1's
   `crashMultiplierBps` schema comment: null-until-CRASHED is an
   API-exposure safety net, not evidence the system doesn't know the
   crash point sooner -- the round engine holds it privately from round
-  start. Verified via a disposable `scripts/verify-crash-ledger.ts`
-  (deleted after use): 18/18 checks against real local Postgres,
-  including a best-effort concurrent cash-out-vs-sweep test honestly
-  caveated (`Promise.allSettled` doesn't guarantee overlap). `npm run
-  build` passes. PR #21 open, awaiting CodeRabbit.
+  start. CodeRabbit's real review of #21 found two genuine High-risk
+  gaps, both fixed (`b6c0b41`) before merge: `placeCrashBet`'s retry
+  path accepted a MISMATCHED wager as an idempotent duplicate --
+  fixed with a new `DuplicateBetWagerMismatchError`; `settleCrashBet`
+  persisted a rejected cashout's multiplier onto a bet marked LOST --
+  fixed to store `null` in that case. CodeRabbit's own suggested P2002
+  fix (matching on `meta.target` field names) was verified WRONG
+  against a real duplicate insert under this project's actual Prisma
+  7.9.1 + `@prisma/adapter-pg` combination (`meta` here has no `target`
+  array, only `modelName`) -- matched on `meta.modelName` instead, the
+  correct fix, not the suggested one. Verified via a disposable
+  `scripts/verify-crash-ledger.ts` (deleted after use, run twice): 21/21
+  checks against real local Postgres, including a best-effort
+  concurrent cash-out-vs-sweep test honestly caveated (`Promise.allSettled`
+  doesn't guarantee overlap). `npm run build` passes on `main`
+  post-merge.
 
 - **Crash Milestone 0 + 1 built (superseded above once Milestone 1
   merged) and an independent UI/UX quick-wins pass shipped (PR #20,
@@ -1448,21 +1463,21 @@
     genuine gap in `resolveCrashBet`'s own input validation before
     merge; see Current Phase for detail.
 
-18. **Merge PR #21 (Crash Milestone 2) and PR #20 (UI quick wins)
-    through CodeRabbit.** #21 built and verified this session (branch
-    `feat/crash-ledger-entrypoint`), CodeRabbit review requested. #20 has
-    been stuck on CodeRabbit's free-tier per-developer rate limit for
-    longer than its own stated cooldown -- re-triggering after the
-    limit's stated reset time produced no response either way as of this
-    writing; may need the person's own GitHub session to check
-    directly, or another wait-and-retry. Milestone 3 depends on #21
-    landing first -- do not branch for it off an unmerged Milestone 2.
+18. **Get PR #20 (UI quick wins) a real CodeRabbit review, then merge.**
+    Still the only open PR in this whole Crash effort that has never
+    received an actual review -- every trigger attempt has hit the
+    shared per-developer rate limit (see Session Notes cont. 17). Not
+    urgent (it's display/layout only, no money logic), but should not
+    be merged around the gap the way #21 briefly was considered --
+    wait for a genuine review this time.
 
 19. DONE -- **Crash Milestone 2: two-phase `services/ledger` entry
-    point.** `placeCrashBet()` / `settleCrashBet()` built and verified
-    (18/18 checks); see Current Phase for the race-closing design (a
-    per-bet row lock, not a new advisory-lock scheme) and what's still
-    open (PR #21 unmerged).
+    point, MERGED as `a77eb08` (PR #21).** `placeCrashBet()` /
+    `settleCrashBet()` built, CodeRabbit-reviewed (two real High-risk
+    findings fixed -- a wager-mismatch idempotency gap and a
+    rejected-cashout persistence bug, see Current Phase), re-verified
+    21/21, merged. `services/ledger`'s Crash surface is now complete for
+    Milestones 1-2; Milestone 3 is next.
 
 20. **Crash Milestone 3: the real-time round engine.** A standalone
     server on `facilitator/`'s template (own `package.json`, `tsx`-run,
@@ -2436,13 +2451,35 @@ degrades. Reject any provider that cannot satisfy this.
   trigger a real review (PR #19's found a genuine input-validation gap,
   see Completed). General lesson: a green status check name is not
   itself evidence of what ran -- read what the bot actually said.
-- **CodeRabbit's free-tier per-developer review limit can outlast its
-  own stated cooldown.** Triggering PR #20's review hit "you've reached
-  your PR review limit... next review available in 59 minutes."
-  Re-triggering after that window (and considerably longer -- checked
-  again ~6 hours later in wall-clock time) produced no response at all,
-  neither a fresh rate-limit message nor a real review -- just silence
-  on the new `@coderabbitai review` comment. Left genuinely unresolved
-  as of this session's end; worth checking directly on GitHub's UI
-  rather than assuming the CLI/API view is complete, next time this
-  comes up.
+- **CodeRabbit's free-tier per-developer review limit is real, outlasts
+  its own stated cooldown, and applies across ALL of one developer's
+  PRs in the repo, not per-PR.** First hit on PR #20 ("next review
+  available in 59 minutes"); re-triggering after that window (and much
+  longer -- hours later in wall-clock time) kept landing on the same
+  limit rather than clearing. Confirmed this is a shared budget, not
+  independently-tracked per PR: PR #21 got ONE real review through
+  cleanly, but its SECOND trigger (after pushing the fix commit) also
+  came back rate-limited ("48 minutes"), immediately after PR #20's
+  retry consumed whatever slot had opened. Net effect this session: two
+  real reviews total were obtainable (PR #19, PR #21's first pass),
+  and every other trigger -- however long the wait between attempts --
+  hit the same wall. Resolution this session: merge on the strength of
+  a genuine review already obtained and fixed, rather than keep
+  spending turns waiting on a confirmation-only re-review (see Current
+  Phase); hold anything that's never gotten a real review at all (PR
+  #20) rather than merge around the gap.
+- **Polling a bot's PR comment for "is the review done yet" needs a
+  structurally-anchored match, not a loose keyword.** Grepping for
+  "walkthrough" to detect a finished review false-matched TWICE in this
+  session -- CodeRabbit's summary comment always contains a
+  `Review Change Stack` link whose URL includes
+  `utm_source=github_walkthrough`, present even in the "still
+  processing" placeholder. Fixed by requiring the literal heading
+  `^## Walkthrough` (anchored at line start), which only appears in a
+  genuinely finished review. Separately: CodeRabbit EDITS its one
+  "summarize" comment in place across a review's lifecycle rather than
+  posting a new comment each time -- polling `.comments[-1]` (the
+  numerically last comment) is not the same as polling the summarize
+  comment's current content, since a later, unrelated reply (like
+  CodeRabbit's own "Review triggered" acknowledgment) can sort after it
+  and mask what the summarize comment actually says.
