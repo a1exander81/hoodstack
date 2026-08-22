@@ -3,7 +3,53 @@
 ## Current Phase
 
 - **Most recent state (read this first; every bullet below predates
-  it).** Both review findings from Milestone 4's own follow-up are
+  it).** The Chrome extension connected for the first time since
+  Milestone 3b, and the authenticated Crash path -- open, unverified
+  across PRs #25, #26, and #27 -- was finally driven for real through
+  the actual browser UI. It didn't work on the first try: every
+  socket connection failed with "authentication failed". Root-caused
+  (not just retried) to a real, pre-existing bug in
+  `game-engine/load-env.ts`, unrelated to anything built this
+  session: `import "dotenv/config"` loads plain `.env` FIRST, which
+  sets `PRIVY_VERIFICATION_KEY` to the literal placeholder `.env`
+  ships with (`"paste-the-key-here"`); the following
+  `dotenv.config({ path: ".env.local" })` does NOT override an
+  already-set value by default, so `.env.local`'s real PEM key was
+  silently discarded every time this process started. The real
+  underlying error, surfaced by temporarily logging it,
+  was `TypeError: "spki" must be SPKI formatted string` from jose's
+  `importSPKI` -- the same failure class as the earlier production
+  401 incident. **This means the authenticated path was never
+  verifiable by anyone, with any real token, until now -- not merely
+  untested.** Fixed with `override: true` (PR #28, branch
+  `fix/game-engine-env-precedence`), CodeRabbit review triggered,
+  not yet confirmed or merged as of this writing.
+
+  **After the fix, the full authenticated flow was exercised live,
+  end to end, through the real UI against real local Postgres** (a
+  temporary wider betting window and slower multiplier curve were
+  used to make manual clicking feasible against this tool's
+  round-trip latency, then fully reverted -- diffed clean before
+  committing):
+  - `bet:place` -> a real `CrashBet` PLACED row + `WAGER` ledger
+    entry, balance decremented correctly in the UI and confirmed via
+    direct query.
+  - The automatic loss sweep -> `CrashBet` -> LOST, `$0` payout,
+    balance correctly unchanged after -- exercised twice.
+  - `bet:cashout` (a real win) -> `CrashBet` -> CASHED_OUT,
+    `cashoutMultiplierBps` 11016, a `PAYOUT` ledger entry of exactly
+    `1101600` micro-USD. **The UI showed "Cashed out at 1.10x --
+    +$1.10", matching the database's real recorded value exactly** --
+    this is PR #27's derived-multiplier display fix, now confirmed
+    correct against a genuine live settlement, not just synthetic
+    arithmetic.
+  No bugs found in the bet/cash-out wiring itself once the auth fix
+  landed -- the socket-layer gap PR #25's own commit message named
+  ("payload parsing, ack shape... NOT verified end-to-end") is now
+  closed for real.
+
+- **Prior state, superseded by the bullet above.** Both review
+  findings from Milestone 4's own follow-up are
   now fixed and MERGED (PR #27, `6dec961`): `crash-game.tsx` derives
   the cash-out multiplier shown to the player from the ack's own
   authoritative `payoutMicroUsd`/`wagerMicroUsd` instead of the
@@ -454,17 +500,20 @@
 
 ## Current Goal
 
-- **Crash's UI and its two follow-up fixes are all MERGED (PR #26
-  `cb27b28`, PR #27 `6dec961` -- see Current Phase). The next unit is
-  not more feature work: it's finally driving a real signed-in
-  bet/cash-out through an actual browser.** This has now been the
-  stated next step after three consecutive PRs (#25, #26, #27)
-  without ever happening, because the Chrome extension hasn't
-  connected in any of the sessions that tried. Before starting
-  Milestone 5 or anything else, either get the extension connected
-  and actually run the flow, or explicitly decide on some other real
-  verification path (a temporary headless-login test harness, e.g.) --
-  don't let a fourth PR land on this path still unverified.
+- **RESOLVED -- the authenticated bet/cash-out path has finally been
+  verified live, end to end, through a real browser** (see Current
+  Phase). PR #28 (`fix/game-engine-env-precedence`) fixes the real
+  root cause found in the process -- CodeRabbit review triggered, not
+  yet merged. Next unit is genuinely open now: **Milestone 5 (Mines
+  and Roulette, still at zero code) is the largest remaining
+  unstarted chunk of the whole product**, alongside age/KYC
+  verification (also zero code, vendor not even chosen -- see Open
+  Questions). Both are real product gaps, not process debt like the
+  last several sessions have mostly been about.
+  `game-engine/index.ts` still runs as a local `tsx` process only --
+  deploying it is a separate, later decision, exactly like the
+  facilitator itself, which still has never been deployed anywhere
+  despite a VPS user/SSH key existing (Hostinger; no domain purchased).
   `game-engine/index.ts` still runs as a local `tsx` process only --
   deploying it is a separate, later decision, exactly like the
   facilitator itself, which still has never been deployed anywhere
