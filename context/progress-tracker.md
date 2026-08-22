@@ -27,8 +27,18 @@
   **3 actionable findings, Merge Risk flagged 🟠 High**, recommending
   the merge wait. It didn't wait. All 3 findings were real (verified
   against the actual code, not assumed from the review text) and are
-  now fixed in a fast-follow, PR #23 (`fix/crash-engine-review-findings`),
-  open with its own CodeRabbit review triggered:
+  now fixed in a fast-follow, PR #23 (`fix/crash-engine-review-findings`,
+  MERGED as `3fb9f51`). **#23's own CodeRabbit review never completed
+  either -- rate-limited on every trigger attempt, same as #20 earlier
+  this session.** The person reviewed the diff manually and merged on
+  that basis rather than waiting further, which is a reasonable call
+  here: the changes were narrow (3 fixes, one file each), already
+  verified 12/12 against real local Postgres including the specific
+  failure modes each fix addresses (see below), and CodeRabbit's own
+  review of the ORIGINAL code (on #22) is what identified these three
+  issues in the first place -- there was no unreviewed surface here
+  that a repeat automated pass was likely to catch and a careful human
+  read wouldn't. Findings fixed:
   1. Observer callbacks (`onBettingOpen`/`onRunning`/`onTick`/
      `onCrashed`) ran uncaught -- a throw from any of them (e.g. a
      broadcast failure in the eventual socket layer) would abort
@@ -283,16 +293,10 @@
 
 ## Current Goal
 
-- **Immediately next: get PR #23 (the fast-follow fixing #22's 3
-  CodeRabbit findings) reviewed and merged before starting 3b.** #22
-  itself already merged (see Current Phase) with those findings
-  unaddressed; #23 fixes all three and needs its own real review, not
-  a repeat of #22's outcome.
-
-- **After #23 merges, the next unit is Crash Milestone 3b: the
-  Socket.io transport.** Milestone 3a (`services/crash-engine`'s
-  `runCrashRound()`) is built, verified against real local Postgres,
-  and merged. Nothing
+- **The next unit is Crash Milestone 3b: the Socket.io transport.**
+  Milestone 3a (`services/crash-engine`'s `runCrashRound()`, plus the
+  3 post-merge fixes from PR #23 -- see Current Phase) is built,
+  verified against real local Postgres, and merged on `main`. Nothing
   real-time is installed anywhere in the repo yet (confirmed by
   grepping `package.json`/`package-lock.json`/`node_modules` end to
   end; `architecture.md`'s "Socket.io"/"Redis (ioredis)" lines are
