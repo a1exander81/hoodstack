@@ -3,7 +3,40 @@
 ## Current Phase
 
 - **Most recent state (read this first; every bullet below predates
-  it).** Homepage perf fix merged (PR #24, `5db5179`), independent of
+  it).** Crash Milestone 3b (the Socket.io transport) is MERGED
+  (PR #25, squash-merged as `b904f37`) -- but this is the FIRST PR in
+  this repo's session history to merge with literally zero review: not
+  CodeRabbit, not a manual read either. CodeRabbit's summary comment
+  posted and `@coderabbitai review` was triggered, but the reply says
+  "Pull request is closed... does not re-review already-closed PRs" --
+  the merge landed before the review ran, same failure mode as PRs
+  #22-#24's rate-limit pattern, except this time nobody read the diff
+  as a fallback. `gh pr view 25 --json reviews` confirms `reviews: []`.
+  Explicitly decided this session (asked directly): log the gap here
+  rather than doing a retroactive manual read or re-triggering
+  CodeRabbit post-merge. **This is a real, live risk, not just a
+  process note**: this PR is the largest money-adjacent surface yet
+  (an authenticated socket wiring `bet:place`/`bet:cashout` directly to
+  `placeCrashBet()`/`settleCrashBet()`), and it ships with a real,
+  named gap of its own -- the commit message states the AUTHENTICATED
+  path was never exercised end-to-end, because minting a real Privy
+  access token requires an actual browser login and no headless path
+  exists. What WAS verified (per the commit message): 7+ real rounds
+  cycled unattended against local Postgres with zero errors, and the
+  auth gate itself (no/empty/garbage token all rejected pre-connect)
+  via a disposable socket.io-client script. What was NOT verified: the
+  socket-layer wiring around a real authenticated bet/cash-out --
+  payload parsing, ack shape, `engineState` tracking under real
+  concurrent connections. **Recommend an actual browser-driven
+  bet/cash-out test through `game-engine/index.ts` before trusting
+  this path with real balances further**, and treat the "trigger
+  review, merge if rate-limited" default as no longer sufficient for
+  PRs at this stakes level -- it silently degraded to "merge with no
+  read at all" the moment the review didn't even get a chance to rate-
+  limit.
+
+- **Prior state, superseded by the bullet above.** Homepage perf fix
+  merged (PR #24, `5db5179`), independent of
   the Crash work below. Root cause, confirmed by curling the raw SSR
   HTML before touching anything: `/` was entirely gated behind Privy's
   client-side `ready` flag -- the server-rendered response contained
@@ -332,29 +365,23 @@
 
 ## Current Goal
 
-- **The next unit is Crash Milestone 3b: the Socket.io transport.**
-  Milestone 3a (`services/crash-engine`'s `runCrashRound()`, plus the
-  3 post-merge fixes from PR #23 -- see Current Phase) is built,
-  verified against real local Postgres, and merged on `main`. Nothing
-  real-time is installed anywhere in the repo yet (confirmed by
-  grepping `package.json`/`package-lock.json`/`node_modules` end to
-  end; `architecture.md`'s "Socket.io"/"Redis (ioredis)" lines are
-  aspirational stack docs only). 3b is a standalone server on
-  `facilitator/`'s template (own `package.json`, `tsx`-run, hard-fail
-  env validation) hosting Socket.io, running as a local `tsx` process
-  for now -- deploying it is a separate, later decision, exactly like
-  the facilitator itself, which still has never been deployed anywhere
+- **Milestone 3b is MERGED (PR #25, `b904f37` -- see Current Phase for
+  the review-gap caveat). The next unit is Crash Milestone 4: the
+  Crash page UI**, the last unbuilt piece of Crash itself. It needs to
+  connect to `game-engine/index.ts`'s Socket.io server, render the
+  live multiplier off `round:tick`/`round:running`, and drive real
+  `bet:place`/`bet:cashout` messages from a signed-in player -- which
+  would also be the first real end-to-end exercise of the
+  authenticated socket path 3b shipped unverified (see Current Phase).
+  Before or alongside building the UI, consider deliberately closing
+  that verification gap (a real browser session driving a real
+  bet/cash-out through the running engine) rather than letting the UI
+  work be the first time that path is ever actually exercised with
+  money on the line.
+  `game-engine/index.ts` still runs as a local `tsx` process only --
+  deploying it is a separate, later decision, exactly like the
+  facilitator itself, which still has never been deployed anywhere
   despite a VPS user/SSH key existing (Hostinger; no domain purchased).
-  Concretely, 3b must: call `runCrashRound()` in a loop (one round after
-  another -- 3a itself only ever runs a single round and returns);
-  broadcast `onBettingOpen`'s commitment and `onTick`'s live multiplier
-  to connected clients; wire real player bet/cash-out socket messages to
-  `placeCrashBet()`/`settleCrashBet()`, using the `onRunning` handle's
-  privately-held `crashMultiplierBps` for a live cash-out exactly the
-  way the Milestone 3a verify script simulated it; and authenticate the
-  socket connection via a socket-adapted `resolveAuthenticatedDid`
-  (transport-agnostic already; reconnect/expiry handling is new work,
-  not new Privy plumbing).
 
 - **RESOLVED -- production's 401 is fixed and confirmed live.** The
   hypothesis this section previously flagged as UNCONFIRMED --
