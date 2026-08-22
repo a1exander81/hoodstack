@@ -3,7 +3,61 @@
 ## Current Phase
 
 - **Most recent state (read this first; every bullet below predates
-  it).** The Chrome extension connected for the first time since
+  it).** Crash's multiplier display got an animated space scene --
+  requested by the person directly (a reference photo of a toy
+  rocket, plus "rocket, rocket flame, trajectory that fades, planets,
+  stars, outer space"). New `src/components/games/crash/
+  rocket-scene.tsx`: a canvas layer behind the live multiplier text --
+  twinkling stars, parallax planets, a rocket sprite with flame and a
+  fading trajectory trail, frozen in place on crash. PR #29 open,
+  CodeRabbit review triggered.
+
+  **Real tooling gap hit and worked around, not silently
+  papered over**: the person's first reference image was a
+  1712x1141 photorealistic 3D render (rocket + sky + desert +
+  launch tower), not a game asset. This machine's image-editing
+  tools are broken -- PIL's compiled `_imaging` extension fails to
+  even import (`symbol not found in flat namespace`, a Python ABI
+  mismatch, confirmed the same failure in both the system Python and
+  a fresh venv) -- and `ffmpeg`'s `colorkey` filter, while the binary
+  itself works, did not produce real alpha transparency even on a
+  controlled synthetic test image (verified by extracting raw pixel
+  bytes before/after: alpha stayed 0xff throughout). Rather than ship
+  a rectangular photo crop over a starfield (would have looked
+  broken, not stylized) or silently redesign around the constraint,
+  asked the person directly; they sent back an already-isolated
+  transparent PNG (`public/crash/rocket.png`, confirmed via raw pixel
+  extraction: corners alpha=0x00, rocket body alpha=0xff) and that's
+  what shipped.
+
+  Design notes worth remembering for the next canvas-animation unit
+  in this repo: rocket position is driven by real elapsed time
+  through a bounded ease-out curve, NOT by `multiplierBps` (expo-
+  nential, would send a position-bound sprite off-screen fast -- a
+  real 221x round was observed live during this session's own
+  Crash-engine testing); the canvas/rAF setup runs once on mount, with
+  live values reaching the loop through refs updated by a separate
+  cheap effect, specifically because `round:tick` fires 10/sec and
+  tearing down a canvas animation at that rate would be wasteful and
+  janky; server ticks are extrapolated forward with the browser's own
+  clock between ticks (capped at 400ms) since 10 discrete steps/sec
+  looks like teleporting for a moving sprite, unlike the plain
+  numeric multiplier elsewhere which renders off the raw tick value
+  directly. `prefers-reduced-motion` honored, matching the login
+  page's existing convention. A real layout bug (the rocket
+  overlapping the multiplier text at high climb progress) was found
+  and fixed via live browser testing with a temporarily slowed growth
+  curve (reverted before commit, diffed clean) before this ever
+  reached the person.
+
+  Recorded as a deliberate, scoped exception to `ui-context.md`'s
+  documented "avoid the neon/space aesthetic, Lucide-only icons"
+  default -- that file updated in the same PR, per this project's own
+  rule that implementation changes to a documented standard update
+  the standard, not just the code.
+
+- **Prior state, superseded by the bullet above.** The Chrome
+  extension connected for the first time since
   Milestone 3b, and the authenticated Crash path -- open, unverified
   across PRs #25, #26, and #27 -- was finally driven for real through
   the actual browser UI. It didn't work on the first try: every
