@@ -21,9 +21,12 @@
   `importSPKI` -- the same failure class as the earlier production
   401 incident. **This means the authenticated path was never
   verifiable by anyone, with any real token, until now -- not merely
-  untested.** Fixed with `override: true` (PR #28, branch
-  `fix/game-engine-env-precedence`), CodeRabbit review triggered,
-  not yet confirmed or merged as of this writing.
+  untested.** Fixed with `override: true` and MERGED (PR #28,
+  `c32ec76`). CodeRabbit was rate-limited on this PR too; a manual
+  `/code-review` pass ran in its place and found nothing (a
+  well-verified, narrowly-scoped one-line fix, confirmed correct
+  against the actual `.env`/`.env.local` contents) before the person
+  merged.
 
   **After the fix, the full authenticated flow was exercised live,
   end to end, through the real UI against real local Postgres** (a
