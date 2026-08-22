@@ -35,6 +35,7 @@ export function CrashGame() {
     phase: "BETWEEN_ROUNDS",
   });
   const [liveMultiplierBps, setLiveMultiplierBps] = useState(10_000);
+  const [liveElapsedMs, setLiveElapsedMs] = useState(0);
   const [justCrashed, setJustCrashed] = useState<CrashedPayload | null>(null);
   const [history, setHistory] = useState<CrashHistoryEntry[]>([]);
   const [myBet, setMyBet] = useState<MyBet | null>(null);
@@ -89,7 +90,10 @@ export function CrashGame() {
 
     socket.on("round:state", (snapshot: RoundStateSnapshot) => {
       setRoundState(snapshot);
-      if (snapshot.phase === "RUNNING") setLiveMultiplierBps(10_000);
+      if (snapshot.phase === "RUNNING") {
+        setLiveMultiplierBps(10_000);
+        setLiveElapsedMs(snapshot.elapsedMs);
+      }
     });
 
     socket.on("round:betting_open", (payload: BettingOpenPayload) => {
@@ -99,6 +103,7 @@ export function CrashGame() {
       setMyBet(null);
       setJustCrashed(null);
       setLiveMultiplierBps(10_000);
+      setLiveElapsedMs(0);
       setRoundState({
         phase: "BETTING",
         crashRoundId: payload.crashRoundId,
@@ -110,11 +115,13 @@ export function CrashGame() {
 
     socket.on("round:running", (payload: RunningPayload) => {
       setLiveMultiplierBps(10_000);
+      setLiveElapsedMs(0);
       setRoundState({ phase: "RUNNING", crashRoundId: payload.crashRoundId, elapsedMs: 0 });
     });
 
     socket.on("round:tick", (payload: TickPayload) => {
       setLiveMultiplierBps(payload.multiplierBps);
+      setLiveElapsedMs(payload.elapsedMs);
     });
 
     socket.on("round:crashed", (payload: CrashedPayload) => {
@@ -233,10 +240,11 @@ export function CrashGame() {
       </div>
 
       <div className="order-1 flex flex-col items-center gap-4 lg:order-2">
-        <div className="flex h-64 w-full items-center justify-center rounded-xl border border-border-default bg-bg-surface">
+        <div className="relative flex h-80 w-full items-center justify-center overflow-hidden rounded-xl border border-border-default bg-bg-surface">
           <MultiplierDisplay
             roundState={roundState}
             liveMultiplierBps={liveMultiplierBps}
+            liveElapsedMs={liveElapsedMs}
             justCrashed={justCrashed}
           />
         </div>
